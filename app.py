@@ -7,6 +7,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 import plotly.graph_objects as go
 from textblob import TextBlob
+import feedparser
+import datetime
 
 # 1. SETUP PAGE
 st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
@@ -60,30 +62,37 @@ def add_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
-# --- NEWS SENTIMENT FUNCTION (NEW) ---
+# --- NEWS SENTIMENT FUNCTION (FIXED WITH FEEDPARSER) ---
 def get_news_sentiment(ticker_symbol):
     try:
-        stock = yf.Ticker(ticker_symbol)
-        news = stock.news
-        news_data = []
+        # Use the official Yahoo Finance RSS feed for the specific ticker
+        # This is 100x more reliable than yfinance.Ticker.news
+        rss_url = f'https://finance.yahoo.com/rss/headline?s={ticker_symbol}'
+        feed = feedparser.parse(rss_url)
         
-        if news:
-            for item in news[:5]: # Get top 5 headlines
-                title = item.get('title', 'No Title')
-                link = item.get('link', '#')
+        news_data = []
+        for entry in feed.entries[:5]: # Get top 5
+            title = entry.title
+            link = entry.link
+            published = entry.published
+            
+            # Analyze Sentiment
+            analysis = TextBlob(title)
+            polarity = analysis.sentiment.polarity
+            
+            if polarity > 0.1:
+                sentiment = "🟢 Positive"
+            elif polarity < -0.1:
+                sentiment = "🔴 Negative"
+            else:
+                sentiment = "⚪ Neutral"
                 
-                # Analyze Sentiment
-                analysis = TextBlob(title)
-                polarity = analysis.sentiment.polarity
-                
-                if polarity > 0.05:
-                    sentiment = "🟢 Positive"
-                elif polarity < -0.05:
-                    sentiment = "🔴 Negative"
-                else:
-                    sentiment = "⚪ Neutral"
-                    
-                news_data.append({'Title': title, 'Link': link, 'Sentiment': sentiment})
+            news_data.append({
+                'Title': title, 
+                'Link': link, 
+                'Sentiment': sentiment,
+                'Date': published
+            })
         return news_data
     except Exception as e:
         return []
@@ -223,7 +232,7 @@ if st.sidebar.button("Analyze & Predict"):
             else:
                 st.warning("⚠️ Not enough data for AI prediction.")
             
-            # --- NEWS SECTION (NEW) ---
+            # --- NEWS SECTION (FIXED) ---
             st.markdown("---")
             st.markdown("### 📰 Latest News & Sentiment")
             

@@ -25,6 +25,9 @@ st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: white; }
     
+    /* HIDE RUNNING MAN */
+    .stStatusWidget { visibility: hidden; }
+    
     /* Metrics */
     .metric-card {
         background-color: #1e2330;
@@ -35,40 +38,28 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
     
-    /* Live Status Badge */
+    /* Badges */
     .status-badge {
-        padding: 5px 10px;
-        border-radius: 6px;
-        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
         font-weight: bold;
         text-transform: uppercase;
         letter-spacing: 1px;
     }
     .status-live { 
-        background-color: #00e676; 
-        color: black; 
-        box-shadow: 0 0 10px rgba(0, 230, 118, 0.5);
-        animation: pulse-green 2s infinite; 
+        background-color: #00e676; color: black; 
+        box-shadow: 0 0 8px rgba(0, 230, 118, 0.4);
     }
-    .status-closed { 
-        background-color: #ff1744; 
-        color: white; 
-        box-shadow: 0 0 5px rgba(255, 23, 68, 0.3);
-    }
+    .status-closed { background-color: #ff1744; color: white; }
     
-    @keyframes pulse-green {
-        0% { opacity: 1; box-shadow: 0 0 10px rgba(0, 230, 118, 0.5); }
-        50% { opacity: 0.7; box-shadow: 0 0 20px rgba(0, 230, 118, 0.2); }
-        100% { opacity: 1; box-shadow: 0 0 10px rgba(0, 230, 118, 0.5); }
-    }
-    
-    /* News Card */
+    /* News */
     .news-card {
         background-color: #151922;
         padding: 15px;
         border-radius: 8px;
         margin-bottom: 12px;
-        border-left: 5px solid #2962ff;
+        border-left: 4px solid #2962ff;
         transition: transform 0.2s;
     }
     .news-card:hover { transform: translateX(5px); background-color: #1a1f2b; }
@@ -109,21 +100,13 @@ COMMODITIES_GLOBAL = {
 # --- 3. CORE LOGIC ---
 
 def is_market_open(ticker):
-    # 1. Global/Crypto/Commodities are usually open (Simplified logic)
     if not (ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^")):
-        return True, "Global 24/7"
-
-    # 2. Indian Market Logic (IST)
+        return True, "Global"
     utc_now = datetime.now(pytz.utc)
     ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
-    
-    # Weekend Check
     if ist_now.weekday() >= 5: return False, "Weekend"
-        
-    # Time Check (9:15 AM - 3:30 PM)
     curr_time = ist_now.time()
-    if dt_time(9, 15) <= curr_time <= dt_time(15, 30):
-        return True, "Open"
+    if dt_time(9, 15) <= curr_time <= dt_time(15, 30): return True, "Open"
     return False, "Closed"
 
 def get_currency(ticker):
@@ -136,8 +119,7 @@ def get_live_data(symbol):
         price = stock.fast_info.last_price
         prev = stock.fast_info.previous_close
         return price, price - prev, (price - prev)/prev * 100
-    except:
-        return 0.0, 0.0, 0.0
+    except: return 0.0, 0.0, 0.0
 
 def get_news(query):
     try:
@@ -147,7 +129,6 @@ def get_news(query):
         for e in feed.entries[:8]:
             blob = TextBlob(e.title)
             sent = "🟢 Bullish" if blob.sentiment.polarity > 0.05 else "🔴 Bearish" if blob.sentiment.polarity < -0.05 else "⚪ Neutral"
-            # Sort by time
             ts = time.mktime(e.published_parsed) if 'published_parsed' in e else 0
             items.append({'title': e.title, 'link': e.link, 'source': e.get('source', {}).get('title', 'News'), 'date': e.get('published','')[:16], 'ts': ts, 'sent': sent})
         return sorted(items, key=lambda x: x['ts'], reverse=True)
@@ -164,20 +145,15 @@ def add_indicators(df):
     return df.dropna()
 
 def train_ai(df):
-    # Prepare Data
     data = df[['Close', 'RSI', 'SMA_50', 'EMA_20']].values
     scaler = MinMaxScaler(feature_range=(0,1))
     scaled = scaler.fit_transform(data)
-    
     if len(scaled) < 60: return None
-    
     X, y = [], []
     for i in range(60, len(scaled)):
         X.append(scaled[i-60:i])
         y.append(scaled[i, 0])
     X, y = np.array(X), np.array(y)
-    
-    # Model
     model = Sequential([
         LSTM(50, return_sequences=True, input_shape=(X.shape[1], 4)),
         Dropout(0.2),
@@ -188,64 +164,51 @@ def train_ai(df):
     ])
     model.compile(optimizer='adam', loss='mse')
     model.fit(X, y, batch_size=16, epochs=3, verbose=0)
-    
-    # Predict
     last_60 = scaled[-60:].reshape(1, 60, 4)
     pred_scaled = model.predict(last_60)
-    
     dummy = np.zeros((1, 4))
     dummy[0, 0] = pred_scaled[0, 0]
     return scaler.inverse_transform(dummy)[0, 0]
 
-# --- 4. NAVIGATION & SIDEBAR ---
+# --- 4. NAVIGATION ---
 st.sidebar.title("⚡ Flash Scanner Pro")
 nav_options = ["🏠 Market Dashboard", "📈 Stock Analyzer", "🏦 ETFs & Mutual Funds", "🛢️ Global Commodities"]
 view = st.sidebar.radio("Go to:", nav_options)
 
-selected_ticker = "RELIANCE.NS" # Default
+selected_ticker = "RELIANCE.NS"
 
 if view == "📈 Stock Analyzer":
-    st.sidebar.header("Select Stock")
     t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
     if st.sidebar.checkbox("Switch to BSE?"): selected_ticker = selected_ticker.replace(".NS", ".BO")
-    
     st.sidebar.markdown("---")
     custom = st.sidebar.text_input("Or Search (e.g. IRFC)")
     if custom: selected_ticker = f"{custom.upper()}.NS"
 
 elif view == "🏦 ETFs & Mutual Funds":
-    st.sidebar.header("Select Fund")
     t_name = st.sidebar.selectbox("Popular ETFs", list(ETFS_MFS.keys()))
     selected_ticker = ETFS_MFS[t_name]
 
 elif view == "🛢️ Global Commodities":
-    st.sidebar.header("Select Commodity")
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
-# --- 5. MAIN DISPLAY ENGINE ---
+# --- 5. SPLIT-SCREEN REFRESH ENGINE ---
 
-# FRAGMENT: Handles the Auto-Refresh Logic (3s Open, Sleep Closed)
+# FRAGMENT 1: PRICE HEADER (Runs every 3 seconds - FAST)
 @st.fragment(run_every=3)
-def render_live_header_and_chart(ticker):
-    # A. Check Status
+def render_fast_price_header(ticker):
     is_open, status_txt = is_market_open(ticker)
     curr_sym = get_currency(ticker)
     
-    # B. Get Price (Always fetch small data)
+    # Always fetch 'fast_info' (Cheap & Fast)
     lp, lc, lpct = get_live_data(ticker)
     color = "#00e676" if lc >= 0 else "#ff1744"
     
-    # Badge Logic
-    if is_open:
-        badge_html = f'<span class="status-badge status-live">🟢 LIVE</span>'
-    else:
-        badge_html = f'<span class="status-badge status-closed">🔴 CLOSED ({status_txt})</span>'
+    badge_html = f'<span class="status-badge status-live">🟢 LIVE</span>' if is_open else f'<span class="status-badge status-closed">🔴 CLOSED</span>'
 
-    # C. Render Header
     st.markdown(f"""
-    <div style="background:#1e2330; padding:20px; border-radius:12px; margin-bottom:20px; border-left: 6px solid {color};">
+    <div style="background:#1e2330; padding:20px; border-radius:12px; margin-bottom:10px; border-left: 6px solid {color};">
         <div style="display:flex; align-items:center; justify-content:space-between;">
             <div>
                 <div style="color:#aaa; font-size:12px; margin-bottom:5px;">MARKET STATUS &nbsp; {badge_html}</div>
@@ -260,44 +223,60 @@ def render_live_header_and_chart(ticker):
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# FRAGMENT 2: CHART (Runs every 60 seconds - SLOW & STABLE)
+@st.fragment(run_every=60)
+def render_stable_chart(ticker):
+    # Only draw chart if market is open to save resources, or if user just loaded page
+    is_open, _ = is_market_open(ticker)
     
-    # D. Render Chart (Only fetch heavy chart if Open)
-    if is_open:
-        try:
-            df = yf.download(ticker, period="1d", interval="1m", progress=False)
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+    try:
+        # Fetch 1-minute data
+        df = yf.download(ticker, period="1d", interval="1m", progress=False)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        
+        if not df.empty:
+            df = add_indicators(df)
+            fig = go.Figure()
             
-            if not df.empty:
-                df = add_indicators(df)
-                fig = go.Figure()
-                fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-                fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=1), name="EMA 20"))
-                fig.update_layout(height=400, margin=dict(t=30,b=0,l=0,r=0), template="plotly_dark", xaxis_rangeslider_visible=False, title=f"⚡ Live 1-Minute Chart ({ticker})")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Connecting to Live Feed...")
-        except: st.error("Chart Unavailable")
-    else:
-        st.info(f"✨ Market is Closed. Chart updates paused to save resources. (Last Price: {lp})")
+            # Candles
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
+            
+            # Smooth EMA line (Cyan)
+            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
+            
+            fig.update_layout(
+                height=450, 
+                margin=dict(t=30,b=0,l=0,r=0), 
+                template="plotly_dark", 
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor="#1e2330",
+                plot_bgcolor="#1e2330",
+                title=dict(text=f"1-Minute Chart ({ticker})", font=dict(color="#aaa", size=12))
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            if not is_open:
+                st.caption(f"✨ Market Closed. Showing final chart.")
+        else:
+            st.warning("Waiting for chart data...")
+    except:
+        st.error("Chart currently unavailable.")
 
 # --- 6. PAGE ROUTING ---
 
 if view == "🏠 Market Dashboard":
     st.title("🌏 Market Dashboard")
     
-    # Dashboard Auto-Refresh Block
     @st.fragment(run_every=5)
     def render_dashboard():
         c1, c2, c3 = st.columns(3)
         indices = [("NIFTY 50", "^NSEI", c1), ("SENSEX", "^BSESN", c2), ("BANK NIFTY", "^NSEBANK", c3)]
-        
         for name, sym, col in indices:
             is_op, _ = is_market_open(sym)
             p, c, pct = get_live_data(sym)
             clr = "#00e676" if c >= 0 else "#ff1744"
-            # Dashboard Badge
             dot = "🟢" if is_op else "🔴"
-            
             with col:
                 st.markdown(f"""
                 <div class="metric-card" style="border-top: 3px solid {clr};">
@@ -315,25 +294,25 @@ if view == "🏠 Market Dashboard":
         st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
 
 else:
-    # ANALYZER VIEW (Stocks, ETFs, Commodities)
     st.title(f"📊 Analysis: {selected_ticker}")
     
-    # 1. LIVE HEADER (Auto-Refreshes)
-    render_live_header_and_chart(selected_ticker)
+    # --- 1. FAST HEADER (Price updates every 3s) ---
+    render_fast_price_header(selected_ticker)
     
-    # 2. AI PREDICTION (Manual)
+    # --- 2. STABLE CHART (Chart updates every 60s) ---
+    render_stable_chart(selected_ticker)
+    
+    # --- 3. AI & NEWS (Manual) ---
     st.markdown("---")
     c_ai, c_news = st.columns([1, 1])
     
     with c_ai:
         st.subheader("🤖 AI Prediction")
         if st.button("Run Prediction Model"):
-            with st.spinner("Training on 1 Year Data..."):
+            with st.spinner("Training..."):
                 try:
-                    # Fetch History
                     df_hist = yf.download(selected_ticker, period="1y", interval="1d", progress=False)
                     if isinstance(df_hist.columns, pd.MultiIndex): df_hist.columns = df_hist.columns.droplevel(1)
-                    
                     if len(df_hist) > 60:
                         df_hist = add_indicators(df_hist)
                         target = train_ai(df_hist)
@@ -343,14 +322,12 @@ else:
                             sig = "BUY 🚀" if diff > 0 else "SELL 🔻"
                             col = "green" if diff > 0 else "red"
                             curr_sym = get_currency(selected_ticker)
-                            
                             st.success(f"AI Target: **{curr_sym}{target:.2f}**")
                             st.markdown(f"Signal: **:{col}[{sig}]** (Potential: {diff:+.2f})")
-                        else: st.error("Model training failed.")
-                    else: st.warning("Not enough data history.")
+                        else: st.error("Model failed.")
+                    else: st.warning("Not enough data.")
                 except Exception as e: st.error(f"Error: {e}")
 
-    # 3. SPECIFIC NEWS
     with c_news:
         st.subheader("📰 Relevant News")
         clean_ticker = selected_ticker.replace(".NS","").replace(".BO","")
@@ -358,5 +335,4 @@ else:
         if news_items:
             for n in news_items[:5]:
                 st.markdown(f'<div style="margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;"><a href="{n["link"]}" style="color:#ddd; text-decoration:none; font-size:14px;">{n["title"]}</a><div style="font-size:10px; color:#666;">{n["date"]} • {n["sent"]}</div></div>', unsafe_allow_html=True)
-        else:
-            st.info("No specific news found.")
+        else: st.info("No news found.")

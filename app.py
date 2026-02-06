@@ -11,35 +11,47 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
 st.title("⚡ Super Stock AI: Real-Time Pro")
 
-# --- INPUT SECTION ---
-col1, col2 = st.columns([1, 3])
+# --- SIDEBAR: SETTINGS ---
+st.sidebar.header("⚙️ Configuration")
+ticker = st.sidebar.text_input("Ticker Symbol", "RELIANCE.NS")
 
-with col1:
-    ticker = st.text_input("Ticker (e.g., RELIANCE.NS, NVDA, BTC-USD)", "RELIANCE.NS")
+# PREDICTION TARGET
+prediction_option = st.sidebar.selectbox(
+    "🎯 AI Prediction Target",
+    ("Next 5 Minutes", "Next 15 Minutes", "Next 30 Minutes", "Next 1 Hour", "Next 1 Day")
+)
 
-with col2:
-    st.write("Select Time Range:")
-    time_period = st.radio(
-        "", 
-        ["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "max"], 
-        index=2, 
-        horizontal=True,
-        format_func=lambda x: x.upper()
-    )
+# CHART VIEW
+chart_view = st.sidebar.selectbox(
+    "👀 Chart History View",
+    ("1 Day", "5 Days", "1 Month", "3 Months", "6 Months", "1 Year", "5 Years")
+)
 
-# --- HELPER: SMART INTERVAL SELECTOR ---
-def get_interval(period):
-    if period == "1d": return "5m"
-    if period == "5d": return "15m"
-    if period == "1mo": return "60m"
-    if period == "3mo": return "1d"
-    return "1d"
+# --- HELPER: TIMEZONE FIXER ---
+def fix_timezone(df):
+    if df.index.tz is None:
+        df.index = df.index.tz_localize('UTC')
+    df.index = df.index.tz_convert('Asia/Kolkata')
+    return df
 
-# 2. TECHNICAL INDICATORS
-def add_indicators(df):
-    window = 50 if len(df) > 50 else 20
-    df['SMA'] = df['Close'].rolling(window=window).mean()
+# --- HELPER: DATA PARAMS ---
+def get_data_params(predict_target, view_target):
+    if predict_target == "Next 5 Minutes": interval = "5m"; period = "5d"
+    elif predict_target == "Next 15 Minutes": interval = "15m"; period = "5d"
+    elif predict_target == "Next 30 Minutes": interval = "30m"; period = "1mo"
+    elif predict_target == "Next 1 Hour": interval = "60m"; period = "3mo"
+    else: interval = "1d"; period = "5y"
     
+    view_map = {
+        "1 Day": "1d", "5 Days": "5d", "1 Month": "1mo", 
+        "3 Months": "3mo", "6 Months": "6mo", "1 Year": "1y", "5 Years": "5y"
+    }
+    requested_period = view_map[view_target]
+    return interval, period, requested_period
+
+# --- TECHNICAL INDICATORS ---
+def add_indicators(df):
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -48,61 +60,71 @@ def add_indicators(df):
     return df
 
 # 3. MAIN LOGIC
-if st.button("Analyze & Predict"):
-    interval = get_interval(time_period)
+if st.sidebar.button("Analyze & Predict"):
+    
+    interval, ai_period, view_period = get_data_params(prediction_option, chart_view)
     st.write(f"Fetching **{interval}** data for **{ticker}**...")
     
     try:
-        data = yf.download(ticker, period=time_period, interval=interval)
+        data = yf.download(ticker, period=ai_period, interval=interval)
         
-        # Fix Multi-Index issue
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.droplevel(1)
-            
+        
         if len(data) > 0:
+            data = fix_timezone(data)
+            
             # --- FUNDAMENTALS ---
-            if time_period not in ["1d", "5d"]:
-                st.markdown("### 🏢 Fundamentals")
-                try:
-                    info = yf.Ticker(ticker).info
-                    market_cap = info.get('marketCap', 'N/A')
-                    if market_cap != 'N/A':
-                        market_cap = f"{market_cap / 1e7:.0f} Cr" if ".NS" in ticker else f"${market_cap / 1e9:.2f} B"
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Market Cap", market_cap)
-                    c2.metric("P/E Ratio", info.get('trailingPE', 'N/A'))
-                    c3.metric("52W High", info.get('fiftyTwoWeekHigh', 'N/A'))
-                    st.markdown("---")
-                except:
-                    pass
+            st.markdown("### 🏢 Company Fundamentals")
+            try:
+                stock = yf.Ticker(ticker)
+                info = stock.info
+                pe_ratio = info.get('trailingPE', 'N/A')
+                market_cap = info.get('marketCap', 'N/A')
+                
+                if market_cap != 'N/A':
+                    if str(ticker).endswith(".NS"):
+                        market_cap = f"₹{market_cap / 10000000:.2f} Cr" 
+                    else:
+                        market_cap = f"${market_cap / 1000000000:.2f} B"
+                
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Market Cap", market_cap)
+                c2.metric("P/E Ratio", pe_ratio)
+                c3.metric("52W High", info.get('fiftyTwoWeekHigh', 'N/A'))
+                c4.metric("Day Low/High", f"{info.get('dayLow','-')} / {info.get('dayHigh','-')}")
+            except:
+                st.warning("Could not fetch fundamentals.")
+            st.markdown("---")
 
-            # --- PLOT CHART (Professional Mode) ---
+            # --- PLOT CHART ---
             data = add_indicators(data)
             
-            st.subheader(f"Price Chart ({time_period.upper()} | {interval} interval)")
+            if chart_view == "1 Day": chart_data = data.tail(75)
+            elif chart_view == "5 Days": chart_data = data.tail(375)
+            else: chart_data = data
+            
+            st.subheader(f"Price Chart ({ticker})")
             fig = go.Figure()
-            
-            # Use String format for dates to avoid gaps on weekends/nights
-            fig.add_trace(go.Candlestick(x=data.index.strftime('%Y-%m-%d %H:%M'),
-                            open=data['Open'], high=data['High'],
-                            low=data['Low'], close=data['Close'], name='OHLC'))
-            
-            fig.add_trace(go.Scatter(x=data.index.strftime('%Y-%m-%d %H:%M'), 
-                            y=data['SMA'], line=dict(color='orange', width=1), name='SMA'))
-            
-            # Remove gaps
-            fig.update_layout(xaxis_type='category', xaxis_rangeslider_visible=False, xaxis_nticks=10)
-            
+            fig.add_trace(go.Candlestick(
+                x=chart_data.index.strftime('%Y-%m-%d %H:%M'),
+                open=chart_data['Open'], high=chart_data['High'],
+                low=chart_data['Low'], close=chart_data['Close'], name='OHLC'
+            ))
+            fig.add_trace(go.Scatter(
+                x=chart_data.index.strftime('%Y-%m-%d %H:%M'), 
+                y=chart_data['SMA_50'], line=dict(color='orange', width=1), name='50 Period SMA'
+            ))
+            fig.update_layout(xaxis_type='category', xaxis_rangeslider_visible=False, height=500)
             st.plotly_chart(fig, use_container_width=True)
 
-            # --- AI TRAINING ---
+            # --- AI TRAINING & PREDICTION ---
             if len(data) > 60:
-                st.markdown("---")
-                st.subheader("🤖 AI Prediction")
+                st.markdown("### 🤖 Artificial Intelligence")
                 
                 progress = st.progress(0)
                 status = st.empty()
-                status.write("Normalizing data...")
+                status.write(f"Training 'Brain' on {interval} candles...")
                 
                 # Prep
                 df_ai = data[['Close']].values
@@ -115,14 +137,13 @@ if st.button("Analyze & Predict"):
                 for i in range(time_step, len(scaled_data)):
                     x_train.append(scaled_data[i-time_step:i, 0])
                     y_train.append(scaled_data[i, 0])
-                    
+                
                 x_train, y_train = np.array(x_train), np.array(y_train)
                 x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
                 
                 progress.progress(40)
-                status.write("Training LSTM Model...")
                 
-                # Train
+                # Model
                 model = Sequential()
                 model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
                 model.add(LSTM(50, return_sequences=False))
@@ -132,7 +153,7 @@ if st.button("Analyze & Predict"):
                 model.fit(x_train, y_train, batch_size=1, epochs=3, verbose=0)
                 
                 progress.progress(80)
-                status.write("Calculating prediction...")
+                status.write("Calculating Probability...")
                 
                 # Predict
                 last_60 = scaled_data[-60:]
@@ -146,36 +167,28 @@ if st.button("Analyze & Predict"):
                 progress.progress(100)
                 status.empty()
                 
-                # --- SMART LABEL LOGIC ---
-                last_candle_time = data.index[-1]
-                
-                # Default label
-                prediction_label = f"Predicted Next {interval}"
-                
-                # If interval is daily, it's always 'Next Day'
-                if interval == '1d':
-                    prediction_label = "Predicted Price (Next Day)"
-                
-                # If intraday, check if market is closed (stale data)
-                else:
-                    time_str = str(last_candle_time)
-                    # Check for Indian market close (15:25 - 15:30)
-                    if "15:30" in time_str or "15:29" in time_str or "15:25" in time_str:
-                         prediction_label = "Predicted Market Open (Gap Up/Down)"
-
-                # Display
+                # Results
                 curr_price = data['Close'].iloc[-1].item()
-                c1, c2 = st.columns(2)
+                last_time = data.index[-1].strftime('%H:%M %p')
                 
-                c1.metric(f"Current Price (at {last_candle_time.strftime('%H:%M')})", f"{curr_price:.2f}")
-                c2.metric(prediction_label, f"{final_val:.2f}", 
-                          delta=f"{final_val - curr_price:.2f}")
-
+                diff = final_val - curr_price
+                pct = (diff / curr_price) * 100
+                color = "green" if diff > 0 else "red"
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Last Price", f"₹{curr_price:.2f}", f"at {last_time}")
+                col2.metric(f"Prediction ({prediction_option})", f"₹{final_val:.2f}")
+                col3.write(f"### Potential Move: :{color}[{pct:.2f}%]")
+                
+                if diff > 0:
+                    st.success(f"🚀 AI Signal: BULLISH (Up by ₹{diff:.2f})")
+                else:
+                    st.error(f"🔻 AI Signal: BEARISH (Down by ₹{abs(diff):.2f})")
+                    
             else:
-                st.warning(f"⚠️ Not enough data points to run AI (Need 60 candles, found {len(data)}).")
-
+                st.warning("⚠️ Not enough data for AI prediction.")
         else:
-            st.error("No data found.")
+            st.error("No data found. Market might be closed or ticker is invalid.")
             
     except Exception as e:
-        st.error(f"Error fetching data: {e}")
+        st.error(f"Error: {e}")

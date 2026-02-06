@@ -8,29 +8,41 @@ from tensorflow.keras.layers import LSTM, Dense
 import plotly.graph_objects as go
 
 # 1. SETUP PAGE
-st.set_page_config(page_title="Super Stock AI", layout="wide")
-st.title("📈 Super Stock AI: Analysis + Prediction")
+st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
+st.title("⚡ Super Stock AI: Real-Time Pro")
 
-# --- INPUT SECTION (Top Bar) ---
-col1, col2 = st.columns([1, 2]) # Make the second column wider for the buttons
+# --- INPUT SECTION ---
+col1, col2 = st.columns([1, 3])
 
 with col1:
-    ticker = st.text_input("Ticker (e.g., RELIANCE.NS, TCS.NS)", "RELIANCE.NS")
+    ticker = st.text_input("Ticker (e.g., RELIANCE.NS, NVDA, BTC-USD)", "RELIANCE.NS")
 
 with col2:
     st.write("Select Time Range:")
-    # This creates the horizontal buttons like TradingView
+    # Expanded options including intraday (1D, 5D)
     time_period = st.radio(
         "", 
-        ["3mo", "6mo", "1y", "3y", "5y", "max"], 
-        index=2, # Default to '1y'
+        ["1d", "5d", "1mo", "3mo", "6mo", "1y", "5y", "max"], 
+        index=2, 
         horizontal=True,
-        format_func=lambda x: x.upper() # Makes '1y' look like '1Y'
+        format_func=lambda x: x.upper()
     )
 
-# 2. TECHNICAL INDICATORS FUNCTION
+# --- HELPER: SMART INTERVAL SELECTOR ---
+def get_interval(period):
+    # Mapping period to the best resolution available on yfinance
+    if period == "1d": return "5m"   # 1 Day view -> 5 minute candles
+    if period == "5d": return "15m"  # 5 Day view -> 15 minute candles
+    if period == "1mo": return "60m" # 1 Month view -> 60 minute candles
+    if period == "3mo": return "1d"  # 3 Months+ -> Daily candles
+    return "1d"                      # Default to daily
+
+# 2. TECHNICAL INDICATORS
 def add_indicators(df):
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    # Adjust SMA window based on data length to avoid errors
+    window = 50 if len(df) > 50 else 20
+    df['SMA'] = df['Close'].rolling(window=window).mean()
+    
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -40,120 +52,109 @@ def add_indicators(df):
 
 # 3. MAIN LOGIC
 if st.button("Analyze & Predict"):
-    st.write(f"Fetching data for **{ticker}**...")
+    interval = get_interval(time_period)
+    st.write(f"Fetching **{interval}** data for **{ticker}**...")
     
-    # DOWNLOAD LOGIC:
-    # If the user selects a short period (like 3mo), we might not have enough 
-    # data for the AI (which needs 60 days context + training history).
-    # So we ALWAYS download at least 1 year for calculations, 
-    # but we will 'slice' the chart to show only what the user asked for.
-    
-    download_period = time_period
-    if time_period in ["3mo", "6mo"]:
-        download_period = "1y" # Force at least 1y download for AI stability
+    # FETCH DATA
+    try:
+        data = yf.download(ticker, period=time_period, interval=interval)
         
-    data = yf.download(ticker, period=download_period, interval="1d")
-    
-    if len(data) > 60:
-        # --- PART A: DASHBOARD ---
-        data = add_indicators(data)
-        
-        # SLICE DATA FOR CHART VIEW (Based on user selection)
-        # If user wanted 3mo, we only show the last ~90 rows in the chart
-        if time_period == "3mo":
-            chart_data = data.tail(90)
-        elif time_period == "6mo":
-            chart_data = data.tail(180)
-        else:
-            chart_data = data
+        # Handling the "Multi-Index" issue that happens with new yfinance versions
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = data.columns.droplevel(1)
             
-        # --- NEW: FUNDAMENTALS ---
-        st.markdown("### 🏢 Company Fundamentals")
-        try:
-            stock = yf.Ticker(ticker)
-            info = stock.info
-            pe_ratio = info.get('trailingPE', 'N/A')
-            market_cap = info.get('marketCap', 'N/A')
-            if market_cap != 'N/A':
-                # Smart format for Indian vs US stocks
-                if str(ticker).endswith(".NS"):
-                    market_cap = f"₹{market_cap / 10000000:.2f} Cr" 
-                else:
-                    market_cap = f"${market_cap / 1000000000:.2f} B"
-            
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Market Cap", market_cap)
-            c2.metric("P/E Ratio", pe_ratio)
-            c3.metric("52W High", info.get('fiftyTwoWeekHigh', 'N/A'))
-            c4.metric("52W Low", info.get('fiftyTwoWeekLow', 'N/A'))
-        except:
-            st.warning("Could not fetch fundamentals (common for indices/crypto).")
-            
-        st.markdown("---")
+        if len(data) > 0:
+            # --- FUNDAMENTALS (Only show for Daily/Longer timeframes to save space) ---
+            if time_period not in ["1d", "5d"]:
+                st.markdown("### 🏢 Fundamentals")
+                try:
+                    info = yf.Ticker(ticker).info
+                    market_cap = info.get('marketCap', 'N/A')
+                    if market_cap != 'N/A':
+                        market_cap = f"{market_cap / 1e7:.0f} Cr" if ".NS" in ticker else f"${market_cap / 1e9:.2f} B"
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Market Cap", market_cap)
+                    c2.metric("P/E Ratio", info.get('trailingPE', 'N/A'))
+                    c3.metric("52W High", info.get('fiftyTwoWeekHigh', 'N/A'))
+                    st.markdown("---")
+                except:
+                    pass
 
-        # --- PLOT CHART ---
-        st.subheader(f"Price Chart ({time_period.upper()})")
-        fig = go.Figure()
-        fig.add_trace(go.Candlestick(x=chart_data.index,
-                        open=chart_data['Open'], high=chart_data['High'],
-                        low=chart_data['Low'], close=chart_data['Close'], name='OHLC'))
-        fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['SMA_50'], line=dict(color='orange', width=1), name='50-Day SMA'))
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # --- PART B: AI TRAINING ---
-        st.markdown("---")
-        st.subheader("🤖 AI Prediction")
-        
-        progress_bar = st.progress(0)
-        st.write("Training model on live data...")
-        
-        # Data Prep
-        df_ai = data[['Close']].values
-        scaler = MinMaxScaler(feature_range=(0,1))
-        scaled_data = scaler.fit_transform(df_ai)
-        
-        x_train, y_train = [], []
-        time_step = 60
-        
-        for i in range(time_step, len(scaled_data)):
-            x_train.append(scaled_data[i-time_step:i, 0])
-            y_train.append(scaled_data[i, 0])
+            # --- PLOT CHART ---
+            data = add_indicators(data)
             
-        x_train, y_train = np.array(x_train), np.array(y_train)
-        x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-        
-        progress_bar.progress(40)
-        
-        # Train
-        model = Sequential()
-        model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-        model.add(LSTM(50, return_sequences=False))
-        model.add(Dense(25))
-        model.add(Dense(1))
-        model.compile(optimizer='adam', loss='mean_squared_error')
-        model.fit(x_train, y_train, batch_size=1, epochs=3, verbose=0)
-        
-        progress_bar.progress(80)
-        
-        # Predict
-        last_60_days = scaled_data[-60:]
-        X_test = []
-        X_test.append(last_60_days)
-        X_test = np.array(X_test)
-        X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
-        
-        pred_price = model.predict(X_test)
-        pred_price_unscaled = scaler.inverse_transform(pred_price)
-        final_prediction = pred_price_unscaled[0][0]
-        
-        progress_bar.progress(100)
-        
-        # Result
-        current_price = data['Close'].iloc[-1].item()
-        c1, c2 = st.columns(2)
-        c1.metric("Current Price", f"{current_price:.2f}")
-        c2.metric("AI Prediction (Next Day)", f"{final_prediction:.2f}", 
-                    delta=f"{final_prediction - current_price:.2f}")
+            st.subheader(f"Price Chart ({time_period.upper()} | {interval} interval)")
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=data.index,
+                            open=data['Open'], high=data['High'],
+                            low=data['Low'], close=data['Close'], name='OHLC'))
+            fig.add_trace(go.Scatter(x=data.index, y=data['SMA'], line=dict(color='orange', width=1), name='SMA'))
+            st.plotly_chart(fig, use_container_width=True)
+
+            # --- AI TRAINING ---
+            # VALIDATION: Check if we have enough data points (need at least 60)
+            if len(data) > 60:
+                st.markdown("---")
+                st.subheader(f"🤖 AI Prediction (Next {interval} candle)")
+                
+                progress = st.progress(0)
+                status = st.empty()
+                status.write("Normalizing data...")
+                
+                # Prep
+                df_ai = data[['Close']].values
+                scaler = MinMaxScaler(feature_range=(0,1))
+                scaled_data = scaler.fit_transform(df_ai)
+                
+                x_train, y_train = [], []
+                time_step = 60
+                
+                for i in range(time_step, len(scaled_data)):
+                    x_train.append(scaled_data[i-time_step:i, 0])
+                    y_train.append(scaled_data[i, 0])
+                    
+                x_train, y_train = np.array(x_train), np.array(y_train)
+                x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+                
+                progress.progress(40)
+                status.write("Training LSTM Model...")
+                
+                # Train
+                model = Sequential()
+                model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
+                model.add(LSTM(50, return_sequences=False))
+                model.add(Dense(25))
+                model.add(Dense(1))
+                model.compile(optimizer='adam', loss='mean_squared_error')
+                model.fit(x_train, y_train, batch_size=1, epochs=3, verbose=0)
+                
+                progress.progress(80)
+                status.write("Calculating prediction...")
+                
+                # Predict
+                last_60 = scaled_data[-60:]
+                X_test = np.array([last_60])
+                X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
+                
+                pred_price = model.predict(X_test)
+                pred_price_unscaled = scaler.inverse_transform(pred_price)
+                final_val = pred_price_unscaled[0][0]
+                
+                progress.progress(100)
+                status.empty() # Clear status text
+                
+                # Display Prediction
+                curr_price = data['Close'].iloc[-1].item()
+                c1, c2 = st.columns(2)
+                c1.metric(f"Current Price ({interval})", f"{curr_price:.2f}")
+                c2.metric(f"Predicted Next {interval}", f"{final_val:.2f}", 
+                          delta=f"{final_val - curr_price:.2f}")
+
+            else:
+                st.warning(f"⚠️ Not enough data points to run AI (Need 60 candles, found {len(data)}). Market might be just opening or timeframe is too short.")
+
+        else:
+            st.error("No data found. If using 1D/5D, ensure market is OPEN or data is available.")
             
-    else:
-        st.error("Not enough data to analyze! Try a longer time period.")
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")

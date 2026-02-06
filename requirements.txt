@@ -1,3 +1,8 @@
+streamlit
 yfinance
-pandas_ta
-google-generativeai
+numpy
+pandas
+tensorflow-cpu
+scikit-learn
+joblib
+plotly

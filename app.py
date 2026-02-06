@@ -199,9 +199,14 @@ elif view=="🛢️ Global Commodities":
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
+
 # --------------------------
 # 7. AUTO-REFRESH LIVE DATA
-st_autorefresh = st.experimental_data_editor if hasattr(st, "experimental_data_editor") else st.experimental_rerun
+from streamlit_autorefresh import st_autorefresh
+
+# Refresh every 30 seconds (30000 ms)
+count = st_autorefresh(interval=30000, limit=None, key="market_data_refresh")
+
 
 # --------------------------
 # 8. LIVE HEADER

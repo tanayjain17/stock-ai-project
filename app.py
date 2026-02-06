@@ -8,7 +8,7 @@ from tensorflow.keras.layers import LSTM, Dense
 import plotly.graph_objects as go
 from textblob import TextBlob
 import feedparser
-import datetime
+import urllib.parse
 
 # 1. SETUP PAGE
 st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
@@ -62,22 +62,30 @@ def add_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
-# --- NEWS SENTIMENT FUNCTION ---
+# --- NEWS SENTIMENT FUNCTION (GOOGLE NEWS FIX) ---
 def get_news_sentiment(ticker_symbol):
     try:
-        clean_ticker = ticker_symbol.replace(".NS", "")
-        rss_url = f'https://finance.yahoo.com/rss/headline?s={clean_ticker}'
+        # Use Google News RSS instead of Yahoo (Much more reliable)
+        # We search for the ticker symbol specifically
+        query = urllib.parse.quote(ticker_symbol)
+        rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+        
         feed = feedparser.parse(rss_url)
         news_data = []
+        
         if feed.entries:
             for entry in feed.entries[:5]: 
                 title = entry.title
                 link = entry.link
+                
+                # Analyze Sentiment
                 analysis = TextBlob(title)
                 polarity = analysis.sentiment.polarity
+                
                 if polarity > 0.05: sentiment = "🟢 Positive"
                 elif polarity < -0.05: sentiment = "🔴 Negative"
                 else: sentiment = "⚪ Neutral"
+                    
                 news_data.append({'Title': title, 'Link': link, 'Sentiment': sentiment})
         return news_data
     except:
@@ -98,31 +106,39 @@ if st.sidebar.button("Analyze & Predict"):
         if len(data) > 0:
             data = fix_timezone(data)
             
-            # --- FUNDAMENTALS (BULLETPROOF VERSION) ---
-            st.markdown("### 🏢 Fundamentals")
+            # --- FUNDAMENTALS (SAFE MODE) ---
+            st.markdown("### 🏢 Fundamentals & Price")
+            
+            # 1. Try to fetch basic info
             try:
                 stock = yf.Ticker(ticker)
-                
-                # We use 'fast_info' which is almost NEVER blocked
-                market_cap = stock.fast_info.get('market_cap')
+                # Try fast_info (best for price)
                 prev_close = stock.fast_info.get('previous_close')
+                last_price = stock.fast_info.get('last_price')
+                market_cap = stock.fast_info.get('market_cap')
                 
-                if market_cap:
-                    if str(ticker).endswith(".NS"):
-                        mk_str = f"₹{market_cap / 10000000:.2f} Cr" 
-                    else:
-                        mk_str = f"${market_cap / 1000000000:.2f} B"
-                    
-                    c1, c2, c3, c4 = st.columns(4)
-                    c1.metric("Market Cap", mk_str)
-                    c2.metric("Prev Close", f"{prev_close:.2f}")
-                    # These might still fail if blocked, so we use safe 'get'
-                    c3.metric("52W High", stock.info.get('fiftyTwoWeekHigh', 'N/A'))
-                    c4.metric("52W Low", stock.info.get('fiftyTwoWeekLow', 'N/A'))
+                c1, c2, c3, c4 = st.columns(4)
+                
+                if last_price:
+                    c1.metric("Live Price", f"₹{last_price:.2f}")
                 else:
-                    st.info("Fundamentals not available (ETF or Index)")
-            except Exception as e:
-                st.warning(f"Fundamentals hidden (Yahoo API Blocked).")
+                    c1.metric("Live Price", f"₹{data['Close'].iloc[-1]:.2f}")
+                    
+                if prev_close:
+                    c2.metric("Previous Close", f"₹{prev_close:.2f}")
+                
+                # Market Cap Check
+                if market_cap:
+                     mk_str = f"₹{market_cap / 1e7:.0f} Cr" if ".NS" in ticker else f"${market_cap / 1e9:.2f} B"
+                     c3.metric("Market Cap", mk_str)
+                else:
+                     c3.metric("Market Cap", "N/A (Blocked)")
+                
+                # 52W High (often blocked, so we use N/A if missing)
+                c4.metric("52W High", stock.info.get('fiftyTwoWeekHigh', 'N/A'))
+                
+            except Exception:
+                st.warning("Yahoo Finance API blocked fundamentals. Showing Price Data only.")
             
             st.markdown("---")
 
@@ -223,9 +239,9 @@ if st.sidebar.button("Analyze & Predict"):
             else:
                 st.warning("⚠️ Not enough data for AI prediction.")
             
-            # --- NEWS SECTION ---
+            # --- NEWS SECTION (GOOGLE NEWS) ---
             st.markdown("---")
-            st.markdown("### 📰 Latest News & Sentiment")
+            st.markdown("### 📰 Latest News & Sentiment (Powered by Google News)")
             
             news_items = get_news_sentiment(ticker)
             if news_items:

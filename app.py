@@ -140,7 +140,7 @@ if view_mode == "📈 Stock Analyzer":
 
 # >>> THE MAGIC: AUTO-REFRESH FRAGMENT <<<
 # This section will auto-reload every 3 seconds WITHOUT refreshing the whole page
-@st.fragment(run_every=3)
+@st.fragment(run_every=60)
 def show_live_price_and_chart(ticker):
     curr_sym = get_currency_symbol(ticker)
     
@@ -191,7 +191,7 @@ def show_live_price_and_chart(ticker):
 if view_mode == "🏠 Market Dashboard":
     st.title("🌏 Live Market Dashboard")
     # This dashboard block refreshes every 5 seconds
-    @st.fragment(run_every=3)
+    @st.fragment(run_every=60)
     def show_index_dashboard():
         col1, col2, col3 = st.columns(3)
         for n, s, c in [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), ("BANK NIFTY", "^NSEBANK", col3)]:

@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import load_model, Sequential
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import joblib
 import gdown
@@ -122,6 +122,37 @@ def add_indicators(df):
     df['Signal'] = df['MACD'].ewm(span=9).mean()
     return df.dropna()
 
+# --------------------------
+# 4. CACHE PRETRAINED MODEL
+@st.cache_resource(show_spinner=True)
+def load_pretrained_model():
+    import gdown, joblib
+    from tensorflow.keras.models import load_model
+    import os
+
+    if not os.path.exists("stock_model.h5"):
+        MODEL_ID = "YOUR_MODEL_FILE_ID"
+        gdown.download(f"https://drive.google.com/uc?id={MODEL_ID}", "stock_model.h5", quiet=False)
+
+    if not os.path.exists("stock_scaler.gz"):
+        SCALER_ID = "YOUR_SCALER_FILE_ID"
+        gdown.download(f"https://drive.google.com/uc?id={SCALER_ID}", "stock_scaler.gz", quiet=False)
+
+    model = load_model("stock_model.h5")
+    scaler = joblib.load("stock_scaler.gz")
+    return model, scaler
+
+pretrained_model, pretrained_scaler = load_pretrained_model()
+
+# --------------------------
+# 5. CACHE AI PREDICTION
+@st.cache_data(show_spinner=False)
+def compute_ai_prediction(df):
+    pred_price, atr = train_ai(df)
+    return pred_price, atr
+
+# --------------------------
+# 6. TRAIN AI FUNCTION
 def train_ai(df):
     df_ai = df[['Close','RSI','SMA_50','EMA_20']].copy()
     scaler = MinMaxScaler()
@@ -150,24 +181,10 @@ def train_ai(df):
     return pred_price, df['ATR'].iloc[-1]
 
 # --------------------------
-# 4. AUTO DOWNLOAD PRETRAINED MODEL
-if not os.path.exists("stock_model.h5"):
-    MODEL_ID = "YOUR_MODEL_FILE_ID"
-    gdown.download(f"https://drive.google.com/uc?id={MODEL_ID}", "stock_model.h5", quiet=False)
-
-if not os.path.exists("stock_scaler.gz"):
-    SCALER_ID = "YOUR_SCALER_FILE_ID"
-    gdown.download(f"https://drive.google.com/uc?id={SCALER_ID}", "stock_scaler.gz", quiet=False)
-
-pretrained_model = load_model("stock_model.h5")
-pretrained_scaler = joblib.load("stock_scaler.gz")
-
-# --------------------------
-# 5. SIDEBAR NAVIGATION
+# 7. SIDEBAR NAVIGATION
 st.sidebar.title("⚡ Market Pulse AI")
 nav_options=["🏠 Market Dashboard","📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities"]
 view=st.sidebar.radio("Go to:",nav_options)
-
 selected_ticker="RELIANCE.NS"
 
 if view=="📈 Stock Analyzer":
@@ -185,7 +202,7 @@ elif view=="🛢️ Global Commodities":
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
 # --------------------------
-# 6. RENDER DASHBOARD
+# 8. LIVE HEADER
 is_open,_=is_market_open(selected_ticker)
 curr_sym=get_currency(selected_ticker)
 lp,lc,lpct=get_live_data(selected_ticker)
@@ -206,7 +223,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 7. HISTORICAL CHART + INDICATORS
+# 9. HISTORICAL CHART
 df_hist = yf.download(selected_ticker, period="1y", interval="1d")
 df_hist = add_indicators(df_hist)
 
@@ -217,10 +234,10 @@ fig.add_trace(go.Scatter(x=df_hist.index, y=df_hist['EMA_20'], line=dict(color='
 st.plotly_chart(fig, use_container_width=True)
 
 # --------------------------
-# 8. AI Prediction
+# 10. AI PREDICTION
 st.subheader("🤖 AI Prediction")
 try:
-    pred_price, atr = train_ai(df_hist)
+    pred_price, atr = compute_ai_prediction(df_hist)
     if pred_price:
         curr,_,_=get_live_data(selected_ticker)
         diff = pred_price-curr
@@ -244,7 +261,7 @@ except Exception as e:
     st.warning(f"Prediction unavailable: {e}")
 
 # --------------------------
-# 9. NEWS
+# 11. NEWS
 st.subheader("📰 Market News")
 news_items=get_news(selected_ticker.replace(".NS","").replace(".BO",""))
 if news_items:

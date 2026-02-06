@@ -1,11 +1,12 @@
 streamlit
 yfinance
-numpy
 pandas
+numpy
+plotly
 scikit-learn
 tensorflow
-plotly
-textblob
-feedparser
-pytz
+joblib
 gdown
+pytz
+feedparser
+textblob

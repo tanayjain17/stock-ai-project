@@ -53,6 +53,15 @@ st.markdown("""
     }
     .status-closed { background-color: #ff1744; color: white; }
     
+    /* Trading Plan Box */
+    .trade-plan {
+        border: 1px solid #4caf50;
+        background-color: #1b2e1b;
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 10px;
+    }
+    
     /* News */
     .news-card {
         background-color: #151922;
@@ -137,6 +146,14 @@ def get_news(query):
 def add_indicators(df):
     df['SMA_50'] = df['Close'].rolling(50).mean()
     df['EMA_20'] = df['Close'].ewm(span=20).mean()
+    # ATR for Stop Loss Calculation
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = np.max(ranges, axis=1)
+    df['ATR'] = true_range.rolling(14).mean()
+    
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -148,7 +165,7 @@ def train_ai(df):
     data = df[['Close', 'RSI', 'SMA_50', 'EMA_20']].values
     scaler = MinMaxScaler(feature_range=(0,1))
     scaled = scaler.fit_transform(data)
-    if len(scaled) < 60: return None
+    if len(scaled) < 60: return None, None
     X, y = [], []
     for i in range(60, len(scaled)):
         X.append(scaled[i-60:i])
@@ -168,7 +185,11 @@ def train_ai(df):
     pred_scaled = model.predict(last_60)
     dummy = np.zeros((1, 4))
     dummy[0, 0] = pred_scaled[0, 0]
-    return scaler.inverse_transform(dummy)[0, 0]
+    pred_price = scaler.inverse_transform(dummy)[0, 0]
+    
+    # Calculate Volatility for SL/Targets
+    last_atr = df['ATR'].iloc[-1]
+    return pred_price, last_atr
 
 # --- 4. NAVIGATION ---
 st.sidebar.title("⚡ Flash Scanner Pro")
@@ -176,18 +197,32 @@ nav_options = ["🏠 Market Dashboard", "📈 Stock Analyzer", "🏦 ETFs & Mutu
 view = st.sidebar.radio("Go to:", nav_options)
 
 selected_ticker = "RELIANCE.NS"
+is_bse = False
 
+# NAVIGATION LOGIC
 if view == "📈 Stock Analyzer":
     t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
-    if st.sidebar.checkbox("Switch to BSE?"): selected_ticker = selected_ticker.replace(".NS", ".BO")
+    
+    # Global BSE Switch
+    is_bse = st.sidebar.checkbox("Switch to BSE?", value=False)
+    if is_bse: selected_ticker = selected_ticker.replace(".NS", ".BO")
+    
     st.sidebar.markdown("---")
-    custom = st.sidebar.text_input("Or Search (e.g. IRFC)")
-    if custom: selected_ticker = f"{custom.upper()}.NS"
+    custom = st.sidebar.text_input("Or Search Stock (e.g. ZOMATO)")
+    if custom: selected_ticker = f"{custom.upper()}.BO" if is_bse else f"{custom.upper()}.NS"
 
 elif view == "🏦 ETFs & Mutual Funds":
     t_name = st.sidebar.selectbox("Popular ETFs", list(ETFS_MFS.keys()))
     selected_ticker = ETFS_MFS[t_name]
+    
+    # NEW: ETF Search + BSE
+    st.sidebar.markdown("---")
+    is_bse = st.sidebar.checkbox("Switch to BSE?", value=False, key="etf_bse")
+    if is_bse: selected_ticker = selected_ticker.replace(".NS", ".BO")
+    
+    custom_etf = st.sidebar.text_input("Or Search ETF (e.g. MAFANG)")
+    if custom_etf: selected_ticker = f"{custom_etf.upper()}.BO" if is_bse else f"{custom_etf.upper()}.NS"
 
 elif view == "🛢️ Global Commodities":
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
@@ -195,16 +230,12 @@ elif view == "🛢️ Global Commodities":
 
 # --- 5. SPLIT-SCREEN REFRESH ENGINE ---
 
-# FRAGMENT 1: PRICE HEADER (Runs every 3 seconds - FAST)
-@st.fragment(run_every=3)
+@st.fragment(run_every=2)
 def render_fast_price_header(ticker):
     is_open, status_txt = is_market_open(ticker)
     curr_sym = get_currency(ticker)
-    
-    # Always fetch 'fast_info' (Cheap & Fast)
     lp, lc, lpct = get_live_data(ticker)
     color = "#00e676" if lc >= 0 else "#ff1744"
-    
     badge_html = f'<span class="status-badge status-live">🟢 LIVE</span>' if is_open else f'<span class="status-badge status-closed">🔴 CLOSED</span>'
 
     st.markdown(f"""
@@ -224,50 +255,25 @@ def render_fast_price_header(ticker):
     </div>
     """, unsafe_allow_html=True)
 
-# FRAGMENT 2: CHART (Runs every 60 seconds - SLOW & STABLE)
 @st.fragment(run_every=60)
 def render_stable_chart(ticker):
-    # Only draw chart if market is open to save resources, or if user just loaded page
     is_open, _ = is_market_open(ticker)
-    
     try:
-        # Fetch 1-minute data
         df = yf.download(ticker, period="1d", interval="1m", progress=False)
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
-        
         if not df.empty:
             df = add_indicators(df)
             fig = go.Figure()
-            
-            # Candles
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-            
-            # Smooth EMA line (Cyan)
             fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
-            
-            fig.update_layout(
-                height=450, 
-                margin=dict(t=30,b=0,l=0,r=0), 
-                template="plotly_dark", 
-                xaxis_rangeslider_visible=False,
-                paper_bgcolor="#1e2330",
-                plot_bgcolor="#1e2330",
-                title=dict(text=f"1-Minute Chart ({ticker})", font=dict(color="#aaa", size=12))
-            )
+            fig.update_layout(height=450, margin=dict(t=30,b=0,l=0,r=0), template="plotly_dark", xaxis_rangeslider_visible=False, paper_bgcolor="#1e2330", plot_bgcolor="#1e2330", title=dict(text=f"1-Minute Chart ({ticker})", font=dict(color="#aaa", size=12)))
             st.plotly_chart(fig, use_container_width=True)
-            
-            if not is_open:
-                st.caption(f"✨ Market Closed. Showing final chart.")
-        else:
-            st.warning("Waiting for chart data...")
-    except:
-        st.error("Chart currently unavailable.")
+    except: st.error("Chart currently unavailable.")
 
 # --- 6. PAGE ROUTING ---
 
 if view == "🏠 Market Dashboard":
     st.title("🌏 Market Dashboard")
-    
     @st.fragment(run_every=5)
     def render_dashboard():
         c1, c2, c3 = st.columns(3)
@@ -286,7 +292,6 @@ if view == "🏠 Market Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
     render_dashboard()
-    
     st.markdown("---")
     st.subheader("📰 Top Market Headlines")
     news = get_news("Indian Stock Market")
@@ -295,14 +300,9 @@ if view == "🏠 Market Dashboard":
 
 else:
     st.title(f"📊 Analysis: {selected_ticker}")
-    
-    # --- 1. FAST HEADER (Price updates every 3s) ---
     render_fast_price_header(selected_ticker)
-    
-    # --- 2. STABLE CHART (Chart updates every 60s) ---
     render_stable_chart(selected_ticker)
     
-    # --- 3. AI & NEWS (Manual) ---
     st.markdown("---")
     c_ai, c_news = st.columns([1, 1])
     
@@ -315,15 +315,33 @@ else:
                     if isinstance(df_hist.columns, pd.MultiIndex): df_hist.columns = df_hist.columns.droplevel(1)
                     if len(df_hist) > 60:
                         df_hist = add_indicators(df_hist)
-                        target = train_ai(df_hist)
+                        target, atr = train_ai(df_hist)
+                        
                         if target:
                             curr, _, _ = get_live_data(selected_ticker)
                             diff = target - curr
                             sig = "BUY 🚀" if diff > 0 else "SELL 🔻"
                             col = "green" if diff > 0 else "red"
                             curr_sym = get_currency(selected_ticker)
+                            
                             st.success(f"AI Target: **{curr_sym}{target:.2f}**")
                             st.markdown(f"Signal: **:{col}[{sig}]** (Potential: {diff:+.2f})")
+                            
+                            # HIDDEN PRO PLAN
+                            with st.expander("🔐 Unlock Pro Trading Plan (Buy/Sell/SL)"):
+                                sl = curr - (1.5 * atr) if diff > 0 else curr + (1.5 * atr)
+                                t1 = curr + (1 * atr) if diff > 0 else curr - (1 * atr)
+                                t2 = curr + (2 * atr) if diff > 0 else curr - (2 * atr)
+                                st.markdown(f"""
+                                <div class="trade-plan">
+                                    <h4 style="margin:0; color:#4caf50;">AI Trade Setup</h4>
+                                    <hr style="border-color:#555;">
+                                    <p><strong>🔵 ENTRY:</strong> {curr:.2f}</p>
+                                    <p><strong>🛑 STOP LOSS:</strong> {sl:.2f}</p>
+                                    <p><strong>🎯 TARGET 1:</strong> {t1:.2f}</p>
+                                    <p><strong>🚀 TARGET 2:</strong> {t2:.2f}</p>
+                                </div>
+                                """, unsafe_allow_html=True)
                         else: st.error("Model failed.")
                     else: st.warning("Not enough data.")
                 except Exception as e: st.error(f"Error: {e}")

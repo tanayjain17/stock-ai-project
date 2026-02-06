@@ -36,6 +36,23 @@ if st.button("Analyze & Predict"):  # Button is now big and in the center
     data = yf.download(ticker, period="5y", interval="1d")
     
     if len(data) > 0:
+        # --- NEW: FUNDAMENTALS SECTION ---
+        st.markdown("### 🏢 Company Fundamentals")
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # specific handling for missing keys (common in crypto/forex)
+        pe_ratio = info.get('trailingPE', 'N/A')
+        market_cap = info.get('marketCap', 'N/A')
+        if market_cap != 'N/A':
+            market_cap = f"₹{market_cap / 10000000:.2f} Cr" if ticker.endswith(".NS") else f"${market_cap / 1000000000:.2f} B"
+            
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Market Cap", market_cap)
+        col2.metric("P/E Ratio", pe_ratio)
+        col3.metric("52W High", info.get('fiftyTwoWeekHigh', 'N/A'))
+        col4.metric("52W Low", info.get('fiftyTwoWeekLow', 'N/A'))
+        st.markdown("---")
         # --- PART A: DASHBOARD ---
         data = add_indicators(data)
         

@@ -39,7 +39,7 @@ st.markdown("""
         font-weight: bold;
         text-transform: uppercase;
     }
-    .market-open { background-color: #00e676; color: black; animation: pulse 1.5s infinite; }
+    .market-open { background-color: #00e676; color: black; animation: pulse 2s infinite; }
     .market-closed { background-color: #ff1744; color: white; }
     
     @keyframes pulse {
@@ -164,16 +164,14 @@ if view_mode == "📈 Analyzer":
 
 # --- 5. PAGE LOGIC ---
 
-# >>> SMART AUTO-REFRESH FRAGMENT <<<
-@st.fragment(run_every=1) 
+# >>> BALANCED REFRESH (3 SECONDS) <<<
+@st.fragment(run_every=3) # <--- UPDATED TO 3 SECONDS (SAFE MODE)
 def show_live_price_and_chart(ticker):
     # 1. CHECK MARKET STATUS
     is_open, status_msg = is_market_open(ticker)
     curr_sym = get_currency_symbol(ticker)
     
     # 2. FETCH PRICE (Only if Open or first run)
-    # We always fetch "fast_info" price because it's cheap and safe.
-    # But we STOP the heavy chart download if closed.
     lp, lc, lpct = get_live_price(ticker)
     clr = "#00e676" if lc >= 0 else "#ff1744"
     
@@ -194,9 +192,6 @@ def show_live_price_and_chart(ticker):
     """, unsafe_allow_html=True)
     
     # 3. SMART CHART FETCH
-    # If Market is CLOSED, we don't need to ping Yahoo every second for a chart that won't change.
-    # We only fetch if it's OPEN. If closed, we show a static message or a cached view.
-    
     if is_open:
         try:
             df_live = yf.download(ticker, period="1d", interval="1m", progress=False)
@@ -212,25 +207,17 @@ def show_live_price_and_chart(ticker):
         except:
             st.warning("Connecting...")
     else:
-        # MARKET CLOSED MODE
         st.info(f"✨ Data Feed Paused (Market Closed). Last Close Price: {lp}")
-        # Optional: You could show a static 'Daily' chart here if you wanted, 
-        # but to save resources we just show the info message.
 
 # --- MAIN APP UI ---
 if view_mode == "🏠 Dashboard":
     st.title("🌏 Market Dashboard")
     
-    # We also gate the dashboard refresh. 
-    # If it's night time, we don't need to refresh indices every 5s.
     @st.fragment(run_every=5)
     def show_index_dashboard():
         col1, col2, col3 = st.columns(3)
         for n, s, c in [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), ("BANK NIFTY", "^NSEBANK", col3)]:
-            # Check if Index is open (Same logic as stocks)
             open_status, _ = is_market_open(s)
-            
-            # If closed, we can just show static data (but fast_info is cheap, so we keep it active for indices)
             p, ch, pc = get_live_price(s)
             clr = "#00e676" if ch >= 0 else "#ff1744"
             curr = get_currency_symbol(s)

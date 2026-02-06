@@ -76,34 +76,29 @@ if st.button("Analyze & Predict"):
                 except:
                     pass
 
-            # --- PLOT CHART (FIXED) ---
+            # --- PLOT CHART (Professional Mode) ---
             data = add_indicators(data)
             
             st.subheader(f"Price Chart ({time_period.upper()} | {interval} interval)")
             fig = go.Figure()
             
-            # Candlestick
-            fig.add_trace(go.Candlestick(x=data.index.strftime('%Y-%m-%d %H:%M'), # String format fixes the gaps
+            # Use String format for dates to avoid gaps on weekends/nights
+            fig.add_trace(go.Candlestick(x=data.index.strftime('%Y-%m-%d %H:%M'),
                             open=data['Open'], high=data['High'],
                             low=data['Low'], close=data['Close'], name='OHLC'))
             
-            # SMA Line
             fig.add_trace(go.Scatter(x=data.index.strftime('%Y-%m-%d %H:%M'), 
                             y=data['SMA'], line=dict(color='orange', width=1), name='SMA'))
             
-            # --- THE MAGIC FIX: REMOVE GAPS ---
-            fig.update_layout(
-                xaxis_type='category',   # This removes weekend/night gaps
-                xaxis_rangeslider_visible=False, # Hides the bottom slider (cleaner look)
-                xaxis_nticks=10 # Limits labels so they don't get messy
-            )
+            # Remove gaps
+            fig.update_layout(xaxis_type='category', xaxis_rangeslider_visible=False, xaxis_nticks=10)
             
             st.plotly_chart(fig, use_container_width=True)
 
             # --- AI TRAINING ---
             if len(data) > 60:
                 st.markdown("---")
-                st.subheader(f"🤖 AI Prediction (Next {interval} candle)")
+                st.subheader("🤖 AI Prediction")
                 
                 progress = st.progress(0)
                 status = st.empty()
@@ -151,11 +146,29 @@ if st.button("Analyze & Predict"):
                 progress.progress(100)
                 status.empty()
                 
-                # Display Prediction
+                # --- SMART LABEL LOGIC ---
+                last_candle_time = data.index[-1]
+                
+                # Default label
+                prediction_label = f"Predicted Next {interval}"
+                
+                # If interval is daily, it's always 'Next Day'
+                if interval == '1d':
+                    prediction_label = "Predicted Price (Next Day)"
+                
+                # If intraday, check if market is closed (stale data)
+                else:
+                    time_str = str(last_candle_time)
+                    # Check for Indian market close (15:25 - 15:30)
+                    if "15:30" in time_str or "15:29" in time_str or "15:25" in time_str:
+                         prediction_label = "Predicted Market Open (Gap Up/Down)"
+
+                # Display
                 curr_price = data['Close'].iloc[-1].item()
                 c1, c2 = st.columns(2)
-                c1.metric(f"Current Price ({interval})", f"{curr_price:.2f}")
-                c2.metric(f"Predicted Next {interval}", f"{final_val:.2f}", 
+                
+                c1.metric(f"Current Price (at {last_candle_time.strftime('%H:%M')})", f"{curr_price:.2f}")
+                c2.metric(prediction_label, f"{final_val:.2f}", 
                           delta=f"{final_val - curr_price:.2f}")
 
             else:

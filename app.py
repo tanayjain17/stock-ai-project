@@ -29,7 +29,7 @@ st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡",
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: white; }
-    .metric-card { background-color: #1e2330; border:1px solid #2a2f3d; border-radius:12px; padding:15px; text-align:center; margin-bottom:10px;}
+    .metric-card { background-color: #1e2330; border:1px solid #2a2f3d; border-radius:8px; padding:15px; text-align:center; margin-bottom:10px;}
     .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;}
     .status-live { background-color:#00e676; color:black; }
     .status-closed { background-color:#ff1744; color:white; }
@@ -40,7 +40,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 2. STOCK & INDEX DATABASES
+# 2. DATABASES
 NIFTY_100_TICKERS = {
     "Reliance Industries":"RELIANCE.NS","TCS":"TCS.NS","HDFC Bank":"HDFCBANK.NS",
     "ICICI Bank":"ICICIBANK.NS","Infosys":"INFY.NS","SBI":"SBIN.NS",
@@ -80,11 +80,14 @@ INDICES = {
 # --------------------------
 # 3. UTILITIES
 def is_market_open(ticker):
-    utc_now = datetime.now(pytz.utc)
-    ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
-    if ist_now.weekday()>=5: return False, "Weekend"
-    if dt_time(9,15)<=ist_now.time()<=dt_time(15,30): return True, "Open"
-    return False, "Closed"
+    try:
+        utc_now = datetime.now(pytz.utc)
+        ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
+        if ist_now.weekday()>=5: return False, "Weekend"
+        if dt_time(9,15)<=ist_now.time()<=dt_time(15,30): return True, "Open"
+        return False, "Closed"
+    except:
+        return False, "Unknown"
 
 def get_currency(ticker):
     return "₹" if ticker.endswith(".NS") or ticker.endswith(".BO") else "$"
@@ -95,7 +98,8 @@ def get_live_data(symbol):
         price = stock.fast_info.last_price
         prev = stock.fast_info.previous_close
         return price, price-prev, (price-prev)/prev*100
-    except: return 0.0,0.0,0.0
+    except:
+        return 0.0, 0.0, 0.0
 
 def get_news(query):
     try:
@@ -105,22 +109,24 @@ def get_news(query):
         for e in feed.entries[:8]:
             blob = TextBlob(e.title)
             sent = "🟢 Bullish" if blob.sentiment.polarity>0.05 else "🔴 Bearish" if blob.sentiment.polarity<-0.05 else "⚪ Neutral"
-            ts = time.mktime(e.published_parsed) if 'published_parsed' in e else 0
+            ts = time.mktime(e.published_parsed) if hasattr(e, 'published_parsed') and e.published_parsed else 0
             items.append({'title':e.title,'link':e.link,'source':e.get('source',{}).get('title','News'),'date':e.get('published','')[:16],'ts':ts,'sent':sent})
         return sorted(items,key=lambda x:x['ts'],reverse=True)
-    except: return []
+    except:
+        return []
 
 def add_indicators(df):
+    df = df.copy()
     df['SMA_50']=df['Close'].rolling(50).mean()
     df['EMA_20']=df['Close'].ewm(span=20).mean()
     high_low = df['High']-df['Low']
     high_close = np.abs(df['High']-df['Close'].shift())
     low_close = np.abs(df['Low']-df['Close'].shift())
     df['ATR'] = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1).rolling(14).mean()
-    delta=df['Close'].diff()
+    delta = df['Close'].diff()
     gain = delta.where(delta>0,0).rolling(14).mean()
     loss = -delta.where(delta<0,0).rolling(14).mean()
-    rs = gain/loss
+    rs = gain/loss.replace(0, np.nan)
     df['RSI'] = 100 - (100/(1+rs))
     ema12 = df['Close'].ewm(span=12).mean()
     ema26 = df['Close'].ewm(span=26).mean()
@@ -129,15 +135,17 @@ def add_indicators(df):
     return df.dropna()
 
 # --------------------------
-# 4. LOAD / CACHE PRETRAINED MODEL
+# 4. CACHE PRETRAINED MODEL
 @st.cache_resource(show_spinner=True)
 def load_pretrained_model():
     if not os.path.exists("stock_model.h5"):
         MODEL_ID = "YOUR_MODEL_FILE_ID"
         gdown.download(f"https://drive.google.com/uc?id={MODEL_ID}", "stock_model.h5", quiet=False)
+
     if not os.path.exists("stock_scaler.gz"):
         SCALER_ID = "YOUR_SCALER_FILE_ID"
         gdown.download(f"https://drive.google.com/uc?id={SCALER_ID}", "stock_scaler.gz", quiet=False)
+
     model = load_model("stock_model.h5")
     scaler = joblib.load("stock_scaler.gz")
     return model, scaler
@@ -145,22 +153,21 @@ def load_pretrained_model():
 pretrained_model, pretrained_scaler = load_pretrained_model()
 
 # --------------------------
-# 5. AI TRAIN & PREDICTION
+# 5. AI TRAINING & PREDICTION
 def train_ai(df):
-    df_ai = df[['Close','RSI','SMA_50','EMA_20']].copy()
-    df_ai = df_ai.dropna()
-    if len(df_ai) < 70: return None, None
+    df_ai = df[['Close','RSI','SMA_50','EMA_20']].copy().fillna(method='ffill')
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(df_ai)
+    if len(scaled)<60: return None, None
     X, y = [], []
-    for i in range(60, len(scaled)):
+    for i in range(60,len(scaled)):
         X.append(scaled[i-60:i])
         y.append(scaled[i,0])
     X, y = np.array(X), np.array(y)
     model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(X.shape[1], 4)),
+        LSTM(50,return_sequences=True,input_shape=(X.shape[1],4)),
         Dropout(0.2),
-        LSTM(50, return_sequences=False),
+        LSTM(50,return_sequences=False),
         Dropout(0.2),
         Dense(25),
         Dense(1)
@@ -168,45 +175,45 @@ def train_ai(df):
     model.compile(optimizer='adam', loss='mse')
     model.fit(X, y, epochs=3, batch_size=16, verbose=0)
     last60 = scaled[-60:].reshape(1,60,4)
-    pred_scaled = model.predict(last60)
+    pred_scaled = model.predict(last60, verbose=0)
     dummy = np.zeros((1,4))
     dummy[0,0] = pred_scaled[0,0]
     pred_price = scaler.inverse_transform(dummy)[0,0]
-    return pred_price, df_ai['ATR'].iloc[-1]
+    return pred_price, df['ATR'].iloc[-1]
 
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=False)
 def compute_ai_prediction(df):
     return train_ai(df)
 
 # --------------------------
-# 6. SIDEBAR
+# 6. SIDEBAR NAVIGATION
 st.sidebar.title("⚡ Market Pulse AI")
-nav_options=["🏠 Market Dashboard","📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities","🚀 Top 5 AI Picks"]
-view=st.sidebar.radio("Go to:", nav_options)
+nav_options = ["🏠 Market Dashboard","📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities","🔥 Top 5 AI Picks"]
+view = st.sidebar.radio("Go to:", nav_options)
 selected_ticker = "RELIANCE.NS"
 
 if view=="📈 Stock Analyzer":
     t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
     custom = st.sidebar.text_input("Or Search Stock (e.g. ZOMATO)")
-    if custom: selected_ticker=f"{custom.upper()}.NS"
+    if custom: selected_ticker = f"{custom.upper()}.NS"
 elif view=="🏦 ETFs & Mutual Funds":
     t_name = st.sidebar.selectbox("Popular ETFs", list(ETFS_MFS.keys()))
     selected_ticker = ETFS_MFS[t_name]
     custom = st.sidebar.text_input("Or Search ETF")
-    if custom: selected_ticker=f"{custom.upper()}.NS"
+    if custom: selected_ticker = f"{custom.upper()}.NS"
 elif view=="🛢️ Global Commodities":
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
 # --------------------------
-# 7. LIVE HEADER (Auto-refresh)
-st_autorefresh = st.experimental_rerun
-is_open,_ = is_market_open(selected_ticker)
+# 7. LIVE MARKET HEADER
+is_open, _ = is_market_open(selected_ticker)
 curr_sym = get_currency(selected_ticker)
 lp, lc, lpct = get_live_data(selected_ticker)
 color = "#00e676" if lc>=0 else "#ff1744"
 badge_html = f'<span class="status-badge status-live">🟢 LIVE</span>' if is_open else f'<span class="status-badge status-closed">🔴 CLOSED</span>'
+
 st.markdown(f"""
 <div style="background:#1e2330; padding:20px; border-radius:12px; margin-bottom:10px; border-left:6px solid {color};">
     <div style="display:flex; justify-content:space-between;">
@@ -221,7 +228,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 8. HISTORICAL CHART
+# 8. HISTORICAL CHART + INDICATORS
 df_hist = yf.download(selected_ticker, period="1y", interval="1d")
 df_hist = add_indicators(df_hist)
 
@@ -234,26 +241,29 @@ st.plotly_chart(fig, use_container_width=True)
 # --------------------------
 # 9. AI PREDICTION
 st.subheader("🤖 AI Prediction")
-pred_price, atr = compute_ai_prediction(df_hist)
-if pred_price:
-    curr,_,_ = get_live_data(selected_ticker)
-    diff = pred_price-curr
-    sig = "BUY 🚀" if diff>0 else "SELL 🔻"
-    st.success(f"AI Target: {curr_sym}{pred_price:.2f}")
-    st.markdown(f"Signal: **{sig}** (Potential: {diff:+.2f})")
-    with st.expander("🔐 AI Trade Plan (Entry/SL/Targets)"):
-        sl=curr-1.5*atr if diff>0 else curr+1.5*atr
-        t1=curr+1*atr if diff>0 else curr-1*atr
-        t2=curr+2*atr if diff>0 else curr-2*atr
-        st.markdown(f"""
-        <div class="trade-plan">
-        <h4 style="color:#4caf50">AI Trade Setup</h4>
-        <p>Entry: {curr:.2f}</p>
-        <p>Stop Loss: {sl:.2f}</p>
-        <p>Target 1: {t1:.2f}</p>
-        <p>Target 2: {t2:.2f}</p>
-        </div>
-        """, unsafe_allow_html=True)
+try:
+    pred_price, atr = compute_ai_prediction(df_hist)
+    if pred_price:
+        curr,_,_ = get_live_data(selected_ticker)
+        diff = pred_price - curr
+        sig = "BUY 🚀" if diff>0 else "SELL 🔻"
+        st.success(f"AI Target: {curr_sym}{pred_price:.2f}")
+        st.markdown(f"Signal: **{sig}** (Potential: {diff:+.2f})")
+        with st.expander("🔐 AI Trade Plan (Entry/SL/Targets)"):
+            sl = curr - 1.5*atr if diff>0 else curr + 1.5*atr
+            t1 = curr + 1*atr if diff>0 else curr - 1*atr
+            t2 = curr + 2*atr if diff>0 else curr - 2*atr
+            st.markdown(f"""
+            <div class="trade-plan">
+            <h4 style="color:#4caf50">AI Trade Setup</h4>
+            <p>Entry: {curr:.2f}</p>
+            <p>Stop Loss: {sl:.2f}</p>
+            <p>Target 1: {t1:.2f}</p>
+            <p>Target 2: {t2:.2f}</p>
+            </div>
+            """, unsafe_allow_html=True)
+except Exception as e:
+    st.warning(f"Prediction unavailable: {e}")
 
 # --------------------------
 # 10. MARKET DASHBOARD
@@ -261,49 +271,84 @@ if view=="🏠 Market Dashboard":
     st.title("🌏 Market Dashboard")
     cols = st.columns(len(INDICES))
     for (name, symbol), col in zip(INDICES.items(), cols):
-        is_op, status_txt = is_market_open(symbol)
+        is_op, _ = is_market_open(symbol)
         p, c, pct = get_live_data(symbol)
-        clr = "#00e676" if c >= 0 else "#ff1744"
+        clr = "#00e676" if c>=0 else "#ff1744"
         dot = "🟢" if is_op else "🔴"
         with col:
             st.markdown(f"""
-            <div class="metric-card" style="border-top: 3px solid {clr};">
+            <div class="metric-card" style="border-top:3px solid {clr};">
                 <div style="font-size:12px; color:#888;">{dot} {name}</div>
-                <div style="font-size:26px; font-weight:bold;">₹{p:,.2f}</div>
+                <div style="font-size:26px; font-weight:bold;">{curr_sym}{p:,.2f}</div>
                 <div style="color:{clr}; font-weight:bold;">{c:+.2f} ({pct:+.2f}%)</div>
             </div>
             """, unsafe_allow_html=True)
-    # Market News
+    st.markdown("---")
     st.subheader("📰 Top Market Headlines")
-    news = get_news("Indian Stock Market")
-    for n in news[:5]:
-        st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
+    market_news = get_news("Indian Stock Market")
+    for n in market_news[:5]:
+        st.markdown(
+            f'''
+            <div class="news-card">
+                <a href="{n["link"]}" target="_blank" style="color:white; text-decoration:none;">
+                    {n["title"]}
+                </a>
+                <div style="font-size:10px; color:#888; margin-top:3px;">
+                    {n["date"]} • {n["sent"]}
+                </div>
+            </div>
+            ''', unsafe_allow_html=True
+        )
 
 # --------------------------
 # 11. TOP 5 AI PICKS
-if view=="🚀 Top 5 AI Picks":
-    st.title("🚀 Top 5 AI Stock Picks (Next Day Potential)")
-    universe = list(NIFTY_100_TICKERS.values())
-    scores=[]
-    with st.spinner("Computing AI scores... this may take a few minutes"):
-        for symbol in universe:
-            df = yf.download(symbol, period="1y", interval="1d")
-            df = add_indicators(df)
-            pred,_ = train_ai(df)
-            if pred is not None:
-                curr,_,_ = get_live_data(symbol)
-                scores.append({'symbol': symbol, 'pred': pred, 'curr': curr, 'diff': pred-curr})
-    if scores:
-        df_scores = pd.DataFrame(scores).sort_values('diff', ascending=False).head(5)
-        for idx, row in df_scores.iterrows():
-            st.markdown(f"<div class='metric-card'><b>{row['symbol']}</b> | Current: ₹{row['curr']:.2f} | Predicted: ₹{row['pred']:.2f} | Potential: ₹{row['diff']:.2f}</div>", unsafe_allow_html=True)
-    else:
-        st.info("No valid stocks for prediction at this time.")
+if view=="🔥 Top 5 AI Picks":
+    st.title("🔥 Top 5 AI Intraday Picks")
+    picks = []
+    for name, ticker in NIFTY_100_TICKERS.items():
+        try:
+            df_temp = yf.download(ticker, period="3mo", interval="1d")
+            if df_temp.empty: continue
+            df_temp = add_indicators(df_temp)
+            pred, atr = train_ai(df_temp)
+            if pred:
+                curr, _, _ = get_live_data(ticker)
+                diff = pred - curr
+                picks.append({'name': name, 'ticker': ticker, 'pred': pred, 'curr': curr, 'diff': diff})
+        except: continue
+    picks = sorted(picks, key=lambda x: x['diff'], reverse=True)[:5]
+    for p in picks:
+        color = "#00e676" if p['diff']>0 else "#ff1744"
+        st.markdown(f"""
+        <div class="metric-card" style="border-top:3px solid {color};">
+            <div style="font-size:14px; color:#aaa;">{p['name']} ({p['ticker']})</div>
+            <div style="font-size:22px; font-weight:bold;">{curr_sym}{p['pred']:.2f}</div>
+            <div style="color:{color}; font-weight:bold;">Potential: {p['diff']:+.2f}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 # --------------------------
 # 12. STOCK NEWS
-st.subheader("📰 Market News for Selected Ticker")
+st.subheader("📰 Stock News")
 news_items = get_news(selected_ticker.replace(".NS","").replace(".BO",""))
 if news_items:
     for n in news_items[:5]:
-        st.markdown(f'<div class="news-card"><a href="{n["link"]}" target="_blank" style="color:white; text-decoration:none;">{n["title"]}</a><div style="font-size:10px;
+        st.markdown(
+            f'''
+            <div class="news-card">
+                <a href="{n["link"]}" target="_blank" style="color:white; text-decoration:none;">
+                    {n["title"]}
+                </a>
+                <div style="font-size:10px; color:#888; margin-top:3px;">
+                    {n["date"]} • {n["sent"]}
+                </div>
+            </div>
+            ''', unsafe_allow_html=True
+        )
+else:
+    st.info("No news found.")
+
+# --------------------------
+# 13. AUTO REFRESH EVERY 60s
+st_autorefresh = st.experimental_rerun
+st.markdown("<meta http-equiv='refresh' content='60'>", unsafe_allow_html=True)

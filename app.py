@@ -7,7 +7,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 import plotly.graph_objects as go
 from textblob import TextBlob
-import feedparser # MANDATORY: Ensure this is in requirements.txt
+import feedparser
+import datetime
 
 # 1. SETUP PAGE
 st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
@@ -61,29 +62,22 @@ def add_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
-# --- NEWS SENTIMENT FUNCTION (RSS FEED FIX) ---
+# --- NEWS SENTIMENT FUNCTION ---
 def get_news_sentiment(ticker_symbol):
     try:
-        # We clean the ticker (remove .NS) for better news search results
         clean_ticker = ticker_symbol.replace(".NS", "")
         rss_url = f'https://finance.yahoo.com/rss/headline?s={clean_ticker}'
-        
         feed = feedparser.parse(rss_url)
         news_data = []
-        
         if feed.entries:
             for entry in feed.entries[:5]: 
                 title = entry.title
                 link = entry.link
-                
-                # Analyze Sentiment
                 analysis = TextBlob(title)
                 polarity = analysis.sentiment.polarity
-                
                 if polarity > 0.05: sentiment = "🟢 Positive"
                 elif polarity < -0.05: sentiment = "🔴 Negative"
                 else: sentiment = "⚪ Neutral"
-                    
                 news_data.append({'Title': title, 'Link': link, 'Sentiment': sentiment})
         return news_data
     except:
@@ -104,29 +98,33 @@ if st.sidebar.button("Analyze & Predict"):
         if len(data) > 0:
             data = fix_timezone(data)
             
-            # --- FUNDAMENTALS (Smart Check) ---
+            # --- FUNDAMENTALS (BULLETPROOF VERSION) ---
+            st.markdown("### 🏢 Fundamentals")
             try:
                 stock = yf.Ticker(ticker)
-                info = stock.info
-                # Only show if we actually found a market cap (means it's a company)
-                market_cap = info.get('marketCap', None)
                 
-                if market_cap is not None:
-                    st.markdown("### 🏢 Company Fundamentals")
+                # We use 'fast_info' which is almost NEVER blocked
+                market_cap = stock.fast_info.get('market_cap')
+                prev_close = stock.fast_info.get('previous_close')
+                
+                if market_cap:
                     if str(ticker).endswith(".NS"):
                         mk_str = f"₹{market_cap / 10000000:.2f} Cr" 
                     else:
                         mk_str = f"${market_cap / 1000000000:.2f} B"
-                
+                    
                     c1, c2, c3, c4 = st.columns(4)
                     c1.metric("Market Cap", mk_str)
-                    c2.metric("P/E Ratio", info.get('trailingPE', '-'))
-                    c3.metric("52W High", info.get('fiftyTwoWeekHigh', '-'))
-                    c4.metric("Day High", info.get('dayHigh', '-'))
-                    st.markdown("---")
-            except:
-                # If it fails (like for SilverBees), we just skip it quietly
-                pass
+                    c2.metric("Prev Close", f"{prev_close:.2f}")
+                    # These might still fail if blocked, so we use safe 'get'
+                    c3.metric("52W High", stock.info.get('fiftyTwoWeekHigh', 'N/A'))
+                    c4.metric("52W Low", stock.info.get('fiftyTwoWeekLow', 'N/A'))
+                else:
+                    st.info("Fundamentals not available (ETF or Index)")
+            except Exception as e:
+                st.warning(f"Fundamentals hidden (Yahoo API Blocked).")
+            
+            st.markdown("---")
 
             # --- PLOT CHART ---
             data = add_indicators(data)

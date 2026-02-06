@@ -106,13 +106,17 @@ if st.sidebar.button("Analyze & Predict"):
             
             st.subheader(f"Price Chart ({ticker})")
             fig = go.Figure()
+            
+            # Formating X-Axis labels based on view
+            date_fmt = '%Y-%m-%d' if interval == '1d' else '%Y-%m-%d %H:%M'
+            
             fig.add_trace(go.Candlestick(
-                x=chart_data.index.strftime('%Y-%m-%d %H:%M'),
+                x=chart_data.index.strftime(date_fmt),
                 open=chart_data['Open'], high=chart_data['High'],
                 low=chart_data['Low'], close=chart_data['Close'], name='OHLC'
             ))
             fig.add_trace(go.Scatter(
-                x=chart_data.index.strftime('%Y-%m-%d %H:%M'), 
+                x=chart_data.index.strftime(date_fmt), 
                 y=chart_data['SMA_50'], line=dict(color='orange', width=1), name='50 Period SMA'
             ))
             fig.update_layout(xaxis_type='category', xaxis_rangeslider_visible=False, height=500)
@@ -167,18 +171,25 @@ if st.sidebar.button("Analyze & Predict"):
                 progress.progress(100)
                 status.empty()
                 
-                # Results
+                # Results Display
                 curr_price = data['Close'].iloc[-1].item()
-                last_time = data.index[-1].strftime('%H:%M %p')
+                
+                # --- FIXED TIMESTAMP LOGIC ---
+                if interval == '1d':
+                    # If daily, show only Date (e.g., 06-Feb-2026)
+                    last_time = data.index[-1].strftime('%d-%b-%Y')
+                else:
+                    # If intraday, show Time (e.g., 03:30 PM)
+                    last_time = data.index[-1].strftime('%H:%M %p')
                 
                 diff = final_val - curr_price
                 pct = (diff / curr_price) * 100
                 color = "green" if diff > 0 else "red"
                 
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Last Price", f"₹{curr_price:.2f}", f"at {last_time}")
+                col1.metric("Last Price", f"₹{curr_price:.2f}", f"Date: {last_time}")
                 col2.metric(f"Prediction ({prediction_option})", f"₹{final_val:.2f}")
-                col3.write(f"### Potential Move: :{color}[{pct:.2f}%]")
+                col3.write(f"### Move: :{color}[{pct:.2f}%]")
                 
                 if diff > 0:
                     st.success(f"🚀 AI Signal: BULLISH (Up by ₹{diff:.2f})")

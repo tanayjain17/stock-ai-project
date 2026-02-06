@@ -66,6 +66,14 @@ COMMODITIES_GLOBAL = {
 
 # --- 3. HELPER FUNCTIONS ---
 
+def get_currency_symbol(ticker):
+    # If ticker ends with .NS, .BO or starts with ^ (Indian Indices), return Rupee
+    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"):
+        return "₹"
+    else:
+        # Otherwise assume Global/US (Commodities, Crypto, US Stocks)
+        return "$"
+
 def get_live_price(symbol):
     try:
         stock = yf.Ticker(symbol)
@@ -95,22 +103,14 @@ def get_news_with_sources(query_term):
         return []
 
 def add_technical_indicators(df):
-    # SMA (Simple Moving Average)
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    # EMA (Exponential Moving Average - Reacts faster)
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    # RSI (Relative Strength Index)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
-    # MACD
-    df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
-    df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
-    
-    return df.dropna() # Drop NaNs created by indicators
+    return df.dropna()
 
 # --- 4. SIDEBAR ---
 st.sidebar.title("🔍 Market Scanner")
@@ -137,11 +137,13 @@ if view_mode != "🏠 Market Dashboard":
 if view_mode == "🏠 Market Dashboard":
     st.title("🌏 Indian Markets Live")
     col1, col2, col3, col4 = st.columns(4)
+    # Added dynamic currency symbol logic here
     for n, s, c in [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), ("BANK NIFTY", "^NSEBANK", col3), ("INDIA VIX", "^INDIAVIX", col4)]:
         p, ch, pc = get_live_price(s)
+        curr = get_currency_symbol(s) # Check currency
         clr = "#00e676" if ch >= 0 else "#ff1744"
         with c:
-            st.markdown(f'<div class="metric-card" style="border-top: 3px solid {clr};"><div>{n}</div><div style="font-size:24px; font-weight:bold;">{p:,.2f}</div><div style="color:{clr};">{ch:+.2f} ({pc:+.2f}%)</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="metric-card" style="border-top: 3px solid {clr};"><div>{n}</div><div style="font-size:24px; font-weight:bold;">{curr}{p:,.2f}</div><div style="color:{clr};">{ch:+.2f} ({pc:+.2f}%)</div></div>', unsafe_allow_html=True)
     st.markdown("---")
     st.subheader("📰 Market News")
     for n in get_news_with_sources("Indian Stock Market"):
@@ -151,8 +153,10 @@ if view_mode == "🏠 Market Dashboard":
 else:
     st.title(f"⚡ {selected_ticker} Pro Analysis")
     lp, lc, lpct = get_live_price(selected_ticker)
+    curr_sym = get_currency_symbol(selected_ticker) # Check currency
     clr = "#00e676" if lc >= 0 else "#ff1744"
-    st.markdown(f'<div style="background:#1e2330; padding:20px; border-radius:12px; display:flex; align-items:center; gap:20px;"><div><div style="color:#888;">LIVE PRICE</div><div style="font-size:42px; font-weight:bold; color:{clr};">₹{lp:,.2f}</div></div><div style="background:{clr}15; color:{clr}; padding:5px 15px; border-radius:15px; font-weight:bold;">{lc:+.2f} ({lpct:+.2f}%)</div></div>', unsafe_allow_html=True)
+    
+    st.markdown(f'<div style="background:#1e2330; padding:20px; border-radius:12px; display:flex; align-items:center; gap:20px;"><div><div style="color:#888;">LIVE PRICE</div><div style="font-size:42px; font-weight:bold; color:{clr};">{curr_sym}{lp:,.2f}</div></div><div style="background:{clr}15; color:{clr}; padding:5px 15px; border-radius:15px; font-weight:bold;">{lc:+.2f} ({lpct:+.2f}%)</div></div>', unsafe_allow_html=True)
     st.write("")
     
     if st.button("🚀 Run Multi-Factor AI Analysis"):
@@ -166,7 +170,7 @@ else:
                 if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
                 
                 if not df.empty and len(df) > 60:
-                    # 2. Add Indicators (NOW USED BY AI)
+                    # 2. Add Indicators
                     df = add_technical_indicators(df)
                     
                     # 3. Chart
@@ -181,35 +185,33 @@ else:
                     st.subheader("🧠 Multi-Factor AI Prediction")
                     st.caption("Analyzing Price + RSI + SMA + EMA simultaneously")
                     
-                    # Features: Close, RSI, SMA_50, EMA_20 (4 Features)
+                    # Features
                     data_features = df[['Close', 'RSI', 'SMA_50', 'EMA_20']].values
                     scaler = MinMaxScaler(feature_range=(0,1))
                     scaled_data = scaler.fit_transform(data_features)
                     
                     X_train, y_train = [], []
                     for i in range(60, len(scaled_data)):
-                        X_train.append(scaled_data[i-60:i]) # Shape: (60, 4)
-                        y_train.append(scaled_data[i, 0])   # Predict 'Close' (Index 0)
+                        X_train.append(scaled_data[i-60:i]) 
+                        y_train.append(scaled_data[i, 0])   
                     
                     X_train, y_train = np.array(X_train), np.array(y_train)
                     
-                    # LSTM Model (Multi-Feature)
+                    # LSTM Model
                     model = Sequential()
                     model.add(LSTM(50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
-                    model.add(Dropout(0.2)) # Prevents overfitting
+                    model.add(Dropout(0.2)) 
                     model.add(LSTM(50, return_sequences=False))
                     model.add(Dropout(0.2))
                     model.add(Dense(25))
                     model.add(Dense(1))
                     model.compile(optimizer='adam', loss='mean_squared_error')
-                    model.fit(X_train, y_train, batch_size=16, epochs=5, verbose=0) # Increased epochs
+                    model.fit(X_train, y_train, batch_size=16, epochs=5, verbose=0) 
                     
-                    # Prediction
-                    last_60 = scaled_data[-60:].reshape(1, 60, 4) # Must match 4 features
+                    # Predict
+                    last_60 = scaled_data[-60:].reshape(1, 60, 4) 
                     pred_scaled = model.predict(last_60)
                     
-                    # Inverse Transform (Trickier with multi-feature)
-                    # We create a dummy array to inverse transform correctly
                     dummy_array = np.zeros((1, 4))
                     dummy_array[0, 0] = pred_scaled[0, 0]
                     pred_price = scaler.inverse_transform(dummy_array)[0, 0]
@@ -219,7 +221,7 @@ else:
                     signal = "STRONG BUY 🚀" if diff > 0 else "STRONG SELL 🔻"
                     
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("AI Target Price", f"₹{pred_price:.2f}")
+                    c1.metric("AI Target Price", f"{curr_sym}{pred_price:.2f}")
                     c2.metric("Signal", signal)
                     c3.metric("Potential Move", f"{diff:+.2f}")
                     

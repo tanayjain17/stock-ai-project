@@ -312,4 +312,4 @@ if view=="💹 Top 5 AI Picks":
             scores.append({'symbol':symbol,'pred':pred,'curr':curr,'diff':pred-curr})
         progress_bar.progress((i+1)/len(universe))
     
-    top5 = sorted(scores
+    top5 = sorted(scores)

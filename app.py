@@ -11,304 +11,298 @@ import feedparser
 import urllib.parse
 import datetime
 
-# --- 1. APP CONFIGURATION & STYLING ---
-st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide", page_icon="📈")
+# --- 1. CONFIG & STYLING ---
+st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="📈")
 
-# Custom CSS for "TradingView-like" Look
 st.markdown("""
 <style>
-    /* Main Background - Dark Blue/Black Gradient */
-    .stApp {
-        background: linear-gradient(to bottom right, #0e1117, #151922);
-        color: #ffffff;
-    }
+    /* Modern Dark Theme */
+    .stApp { background-color: #0e1117; color: white; }
     
-    /* Custom Card Styling */
-    div.css-1r6slb0.e1tzin5v2 {
+    /* Card Styles */
+    .metric-card {
         background-color: #1e2330;
         border: 1px solid #2a2f3d;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.3);
-    }
-    
-    /* Metrics Styling */
-    [data-testid="stMetricValue"] {
-        font-size: 28px;
-        color: #00e676; /* Bright Green */
-        font-weight: 700;
-    }
-    
-    /* Sidebar Styling */
-    section[data-testid="stSidebar"] {
-        background-color: #12151e;
-        border-right: 1px solid #2a2f3d;
-    }
-    
-    /* Button Styling */
-    .stButton>button {
-        background: linear-gradient(45deg, #2962ff, #0039cb);
-        color: white;
         border-radius: 8px;
-        border: none;
-        padding: 10px 24px;
-        font-weight: bold;
-        transition: all 0.3s ease;
+        padding: 15px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 5px 15px rgba(41, 98, 255, 0.4);
+    
+    /* News Feed Styles */
+    .news-card {
+        background-color: #151922;
+        padding: 12px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        border-left: 4px solid #2962ff;
+    }
+    
+    /* Ticker Tape Animation */
+    @keyframes ticker {
+        0% { transform: translateX(100%); }
+        100% { transform: translateX(-100%); }
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. ASSET DATABASE (The "Smart List") ---
-# This mimics the auto-complete dropdown
-ASSETS = {
-    "Stocks (India)": {
-        "Reliance Industries": "RELIANCE",
-        "TCS": "TCS",
-        "HDFC Bank": "HDFCBANK",
-        "Infosys": "INFY",
-        "ICICI Bank": "ICICIBANK",
-        "Tata Motors": "TATAMOTORS",
-        "State Bank of India": "SBIN",
-        "Adani Enterprises": "ADANIENT",
-        "Bajaj Finance": "BAJFINANCE",
-        "Wipro": "WIPRO",
-        "Zomato": "ZOMATO",
-        "Paytm": "PAYTM",
-        "Suzlon Energy": "SUZLON"
-    },
-    "Commodities (MCX/Global)": {
-        "Gold (Global Spot)": "GC=F",
-        "Silver (Global Spot)": "SI=F",
-        "Crude Oil (WTI)": "CL=F",
-        "Gold Bees (India ETF)": "GOLDBEES",
-        "Silver Bees (India ETF)": "SILVERBEES"
-    },
-    "Indices (F/O)": {
-        "Nifty 50": "^NSEI",
-        "Bank Nifty": "^NSEBANK",
-        "Sensex": "^BSESN",
-        "India VIX": "^INDIAVIX"
-    },
-    "Crypto": {
-        "Bitcoin (USD)": "BTC-USD",
-        "Ethereum (USD)": "ETH-USD",
-        "Solana (USD)": "SOL-USD"
-    }
+# --- 2. ASSET LISTS (The "Master Database") ---
+# Top 50 Indian Stocks (Nifty 50) + Popular F/O
+NIFTY_50_TICKERS = {
+    "Reliance Industries": "RELIANCE.NS", "TCS": "TCS.NS", "HDFC Bank": "HDFCBANK.NS",
+    "ICICI Bank": "ICICIBANK.NS", "Infosys": "INFY.NS", "SBI": "SBIN.NS",
+    "Bharti Airtel": "BHARTIARTL.NS", "ITC": "ITC.NS", "L&T": "LT.NS",
+    "Kotak Bank": "KOTAKBANK.NS", "Axis Bank": "AXISBANK.NS", "HUL": "HINDUNILVR.NS",
+    "Tata Motors": "TATAMOTORS.NS", "Maruti Suzuki": "MARUTI.NS", "Asian Paints": "ASIANPAINT.NS",
+    "Sun Pharma": "SUNPHARMA.NS", "Titan": "TITAN.NS", "Bajaj Finance": "BAJFINANCE.NS",
+    "UltraTech Cement": "ULTRACEMCO.NS", "ONGC": "ONGC.NS", "NTPC": "NTPC.NS",
+    "Wipro": "WIPRO.NS", "Power Grid": "POWERGRID.NS", "Tata Steel": "TATASTEEL.NS",
+    "JSW Steel": "JSWSTEEL.NS", "Adani Enterprises": "ADANIENT.NS", "Adani Ports": "ADANIPORTS.NS",
+    "Coal India": "COALINDIA.NS", "M&M": "M&M.NS", "HCL Tech": "HCLTECH.NS"
 }
 
-# --- 3. HELPER FUNCTIONS (The "Brain") ---
+INDICES = {
+    "NIFTY 50": "^NSEI",
+    "SENSEX": "^BSESN",
+    "BANK NIFTY": "^NSEBANK",
+    "INDIA VIX": "^INDIAVIX"
+}
 
-def fix_timezone(df):
-    if df.index.tz is None:
-        df.index = df.index.tz_localize('UTC')
-    df.index = df.index.tz_convert('Asia/Kolkata')
-    return df
+COMMODITIES = {
+    "Gold (Global)": "GC=F",
+    "Silver (Global)": "SI=F",
+    "Crude Oil (WTI)": "CL=F",
+    "Gold Bees (India)": "GOLDBEES.NS",
+    "Silver Bees (India)": "SILVERBEES.NS"
+}
 
-def get_real_time_price(symbol):
+# --- 3. HELPER FUNCTIONS ---
+
+def get_live_price(symbol):
     try:
-        live_data = yf.download(symbol, period="1d", interval="1m", progress=False)
-        if not live_data.empty:
-            if live_data.index.tz is None:
-                live_data.index = live_data.index.tz_localize('UTC')
-            live_data.index = live_data.index.tz_convert('Asia/Kolkata')
-            return live_data['Close'].iloc[-1].item(), live_data.index[-1]
-        return None, None
+        # Ultra-fast fetch for current price only
+        stock = yf.Ticker(symbol)
+        price = stock.fast_info.last_price
+        prev_close = stock.fast_info.previous_close
+        
+        # Calculate change
+        change = price - prev_close
+        pct = (change / prev_close) * 100
+        return price, change, pct
     except:
-        return None, None
+        return 0.0, 0.0, 0.0
 
-def get_data_params(predict_target, view_target):
-    if predict_target == "Next 5 Minutes": interval = "5m"; period = "5d"
-    elif predict_target == "Next 15 Minutes": interval = "15m"; period = "5d"
-    elif predict_target == "Next 30 Minutes": interval = "30m"; period = "1mo"
-    elif predict_target == "Next 1 Hour": interval = "60m"; period = "3mo"
-    else: interval = "1d"; period = "5y"
-    
-    view_map = {
-        "1 Day": "1d", "5 Days": "5d", "1 Month": "1mo", 
-        "3 Months": "3mo", "6 Months": "6mo", "1 Year": "1y", "5 Years": "5y"
-    }
-    return interval, period, view_map[view_target]
-
-def add_indicators(df):
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    return df
-
-def get_news_sentiment(ticker_symbol):
+def get_news_with_sources(query_term):
     try:
-        query = urllib.parse.quote(ticker_symbol.replace(".NS","").replace(".BO",""))
-        rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
+        # Using Google News RSS which includes source info
+        safe_query = urllib.parse.quote(query_term)
+        rss_url = f"https://news.google.com/rss/search?q={safe_query}&hl=en-IN&gl=IN&ceid=IN:en"
         feed = feedparser.parse(rss_url)
-        news_data = []
-        if feed.entries:
-            for entry in feed.entries[:5]: 
-                analysis = TextBlob(entry.title)
-                polarity = analysis.sentiment.polarity
-                sentiment = "🟢 Positive" if polarity > 0.05 else "🔴 Negative" if polarity < -0.05 else "⚪ Neutral"
-                news_data.append({'Title': entry.title, 'Link': entry.link, 'Sentiment': sentiment})
-        return news_data
+        
+        news_items = []
+        for entry in feed.entries[:10]: # Increased to 10 items
+            title = entry.title
+            link = entry.link
+            source = entry.source.title if 'source' in entry else "Google News"
+            published = entry.published[:16] # Shorten date
+            
+            # Sentiment Analysis
+            blob = TextBlob(title)
+            pol = blob.sentiment.polarity
+            sentiment = "🟢 Bullish" if pol > 0.05 else "🔴 Bearish" if pol < -0.05 else "⚪ Neutral"
+            
+            news_items.append({
+                "title": title, "link": link, "source": source,
+                "date": published, "sentiment": sentiment
+            })
+        return news_items
     except:
         return []
 
-# --- 4. SIDEBAR CONTROLS ---
-st.sidebar.markdown("## ⚙️ Control Panel")
+def add_indicators(df):
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    df['SMA_200'] = df['Close'].rolling(window=200).mean()
+    return df
 
-# A. Asset Selection
-asset_category = st.sidebar.selectbox("📂 Asset Class", list(ASSETS.keys()))
-selected_asset_name = st.sidebar.selectbox("🔍 Select Asset", list(ASSETS[asset_category].keys()))
-base_ticker = ASSETS[asset_category][selected_asset_name]
+# --- 4. SIDEBAR CONFIG ---
+st.sidebar.title("🔍 Market Scanner")
 
-# B. Exchange Selection (Only for Indian Stocks/ETFs)
-final_ticker = base_ticker
-if asset_category in ["Stocks (India)", "Commodities (MCX/Global)"]:
-    # Only show toggle if it's an Indian asset (not global commodity futures like GC=F)
-    if "=" not in base_ticker: 
-        exchange = st.sidebar.radio("🏛️ Exchange", ["NSE", "BSE"], horizontal=True)
-        suffix = ".NS" if exchange == "NSE" else ".BO"
-        final_ticker = base_ticker + suffix
+# View Mode Selection
+view_mode = st.sidebar.radio("Go to Section:", ["🏠 Market Dashboard", "📈 Stock Analysis", "🛢️ Commodities"])
 
-st.sidebar.markdown("---")
-prediction_option = st.sidebar.selectbox("🎯 Prediction Target", ("Next 5 Minutes", "Next 15 Minutes", "Next 1 Hour", "Next 1 Day"))
-chart_view = st.sidebar.selectbox("👀 Chart History", ("1 Day", "5 Days", "1 Month", "1 Year", "5 Years"))
-
-# --- 5. MAIN APP LAYOUT ---
-
-st.title(f"⚡ {selected_asset_name} ({final_ticker})")
-
-if st.sidebar.button("🚀 Run Analysis", type="primary"):
+if view_mode == "📈 Stock Analysis":
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Select Asset")
     
-    interval, ai_period, view_period = get_data_params(prediction_option, chart_view)
+    # "All Stocks" Logic: Combobox lets you type OR select
+    selected_stock_name = st.sidebar.selectbox(
+        "Search Stock (Type to search Nifty 50)", 
+        list(NIFTY_50_TICKERS.keys()),
+        index=0
+    )
     
-    with st.spinner(f"📡 Connecting to Exchange... Fetching {final_ticker}"):
-        try:
-            # Fetch Data
-            data = yf.download(final_ticker, period=ai_period, interval=interval, progress=False)
-            if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.droplevel(1)
-            
-            real_price, real_time = get_real_time_price(final_ticker)
-            
-            if len(data) > 0:
-                data = fix_timezone(data)
-                
-                # --- DASHBOARD METRICS ---
-                display_price = real_price if real_price else data['Close'].iloc[-1]
-                stock_fast = yf.Ticker(final_ticker)
-                prev_close = stock_fast.fast_info.get('previous_close', display_price)
-                
-                change = display_price - prev_close
-                pct_change = (change / prev_close) * 100
-                color_hex = "#00e676" if change >= 0 else "#ff1744"
-                
-                # Custom HTML Metric Card
-                st.markdown(f"""
-                <div style="background-color: #1e2330; padding: 20px; border-radius: 12px; border-left: 5px solid {color_hex};">
-                    <h3 style="margin:0; color: #b0bec5;">Live Price</h3>
-                    <h1 style="margin:0; font-size: 42px; color: {color_hex};">₹{display_price:,.2f}</h1>
-                    <h4 style="margin:0; color: {color_hex};">{change:+.2f} ({pct_change:+.2f}%)</h4>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown("### ") # Spacer
+    # Exchange Toggle
+    exchange = st.sidebar.radio("Exchange", ["NSE", "BSE"], horizontal=True)
+    
+    # Logic to handle ticker mapping
+    base_ticker = NIFTY_50_TICKERS[selected_stock_name]
+    ticker_symbol = base_ticker.replace(".NS", ".BO") if exchange == "BSE" else base_ticker
+    
+    # Custom Ticker Input (For stocks NOT in the list)
+    st.sidebar.markdown("---")
+    custom_ticker = st.sidebar.text_input("Or type ANY symbol (e.g., ZOMATO.NS):")
+    if custom_ticker:
+        ticker_symbol = custom_ticker.upper()
 
-                # --- CHART ---
-                data = add_indicators(data)
-                if chart_view == "1 Day": chart_data = data.tail(75)
-                elif chart_view == "5 Days": chart_data = data.tail(375)
-                else: chart_data = data
-                
-                fig = go.Figure()
-                date_fmt = '%H:%M' if interval != '1d' else '%d-%b'
-                
-                # Candlestick
-                fig.add_trace(go.Candlestick(
-                    x=chart_data.index.strftime(date_fmt),
-                    open=chart_data['Open'], high=chart_data['High'],
-                    low=chart_data['Low'], close=chart_data['Close'], name='Price'
-                ))
-                # SMA
-                fig.add_trace(go.Scatter(
-                    x=chart_data.index.strftime(date_fmt), 
-                    y=chart_data['SMA_50'], line=dict(color='#2962ff', width=2), name='SMA 50'
-                ))
-                
-                fig.update_layout(
-                    paper_bgcolor='#0e1117', plot_bgcolor='#0e1117',
-                    font=dict(color='white'),
-                    xaxis=dict(showgrid=False, type='category'),
-                    yaxis=dict(showgrid=True, gridcolor='#2a2f3d'),
-                    height=500, margin=dict(l=0, r=0, t=0, b=0)
-                )
-                st.plotly_chart(fig, use_container_width=True)
+elif view_mode == "🛢️ Commodities":
+    st.sidebar.subheader("Select Commodity")
+    comm_name = st.sidebar.selectbox("Asset", list(COMMODITIES.keys()))
+    ticker_symbol = COMMODITIES[comm_name]
 
-                # --- AI PREDICTION ---
-                if len(data) > 60:
-                    st.markdown("### 🤖 Neural Network Prediction")
-                    progress_bar = st.progress(0)
+# Global Params
+if view_mode != "🏠 Market Dashboard":
+    prediction_range = st.sidebar.selectbox("Prediction Horizon", ["Next 5 Mins", "Next 1 Hour", "Next 1 Day"])
+    chart_period = st.sidebar.selectbox("Chart History", ["1d", "5d", "1mo", "6mo", "1y", "5y"])
+
+# --- 5. PAGE 1: MARKET DASHBOARD (DEFAULT LANDING) ---
+if view_mode == "🏠 Market Dashboard":
+    st.title("🌏 Indian Markets at a Glance")
+    st.markdown("Live updates from NSE & BSE Indices")
+    
+    # Fetch Index Data Live
+    col1, col2, col3, col4 = st.columns(4)
+    
+    indices_list = [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), 
+                    ("BANK NIFTY", "^NSEBANK", col3), ("INDIA VIX", "^INDIAVIX", col4)]
+    
+    for name, sym, col in indices_list:
+        price, chg, pct = get_live_price(sym)
+        color = "green" if chg >= 0 else "red"
+        with col:
+            st.markdown(f"""
+            <div class="metric-card" style="border-top: 4px solid {color};">
+                <h4 style="margin:0; color: #aaa;">{name}</h4>
+                <h2 style="margin:5px 0; color: white;">{price:,.2f}</h2>
+                <p style="margin:0; color: {color}; font-weight:bold;">{chg:+.2f} ({pct:+.2f}%)</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+    st.markdown("---")
+    st.subheader("📰 Top Market Headlines")
+    
+    # General Market News
+    general_news = get_news_with_sources("Indian Stock Market Nifty Sensex")
+    for news in general_news:
+        st.markdown(f"""
+        <div class="news-card">
+            <div style="display:flex; justify-content:space-between; color:#aaa; font-size:12px;">
+                <span>📢 {news['source']}</span>
+                <span>🕒 {news['date']}</span>
+            </div>
+            <a href="{news['link']}" style="color:white; text-decoration:none; font-weight:600; font-size:16px; display:block; margin-top:5px;">
+                {news['title']}
+            </a>
+        </div>
+        """, unsafe_allow_html=True)
+
+# --- 6. PAGE 2 & 3: ANALYSIS ENGINE ---
+else:
+    st.title(f"⚡ {ticker_symbol} Analysis")
+    
+    # 1. LIVE HEADER
+    l_price, l_chg, l_pct = get_live_price(ticker_symbol)
+    l_color = "#00e676" if l_chg >= 0 else "#ff1744"
+    
+    st.markdown(f"""
+    <div style="padding: 20px; background: #1e2330; border-radius: 10px; display: flex; align-items: center; gap: 20px;">
+        <div>
+            <span style="font-size: 14px; color: #aaa;">CURRENT PRICE</span>
+            <div style="font-size: 36px; font-weight: bold; color: {l_color};">₹{l_price:,.2f}</div>
+        </div>
+        <div style="background: {l_color}20; padding: 5px 15px; border-radius: 20px; color: {l_color}; font-weight: bold;">
+            {l_chg:+.2f} ({l_pct:+.2f}%)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.write("") # Spacer
+
+    if st.button("🔄 Run Deep Analysis"):
+        with st.spinner("Crunching numbers..."):
+            try:
+                # Get Chart Data
+                data = yf.download(ticker_symbol, period=chart_period if 'd' not in chart_period else "5d", interval="1d" if 'y' in chart_period else "5m")
+                
+                if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.droplevel(1)
+
+                if not data.empty:
+                    data = add_indicators(data)
                     
-                    # Data Prep
+                    # PLOTLY CHART
+                    fig = go.Figure()
+                    fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name="Price"))
+                    fig.add_trace(go.Scatter(x=data.index, y=data['SMA_50'], line=dict(color='orange', width=1.5), name="50 SMA"))
+                    fig.update_layout(height=500, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(l=0,r=0,t=0,b=0))
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # AI PREDICTION (Simulated for speed/stability in this snippet)
+                    st.subheader("🤖 AI Price Target")
+                    
+                    # Simple LSTM Logic (Simplified for robustness)
                     df_ai = data[['Close']].values
                     scaler = MinMaxScaler(feature_range=(0,1))
                     scaled_data = scaler.fit_transform(df_ai)
                     
-                    x_train, y_train = [], []
-                    for i in range(60, len(scaled_data)):
-                        x_train.append(scaled_data[i-60:i, 0])
-                        y_train.append(scaled_data[i, 0])
-                    
-                    x_train, y_train = np.array(x_train), np.array(y_train)
-                    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
-                    
-                    progress_bar.progress(50)
-                    
-                    # LSTM Model
-                    model = Sequential()
-                    model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-                    model.add(LSTM(50, return_sequences=False))
-                    model.add(Dense(25))
-                    model.add(Dense(1))
-                    model.compile(optimizer='adam', loss='mean_squared_error')
-                    model.fit(x_train, y_train, batch_size=1, epochs=3, verbose=0)
-                    
-                    progress_bar.progress(90)
-                    
-                    # Predict
-                    last_60 = scaled_data[-60:].reshape(1, 60, 1)
-                    pred_price = scaler.inverse_transform(model.predict(last_60))[0][0]
-                    
-                    progress_bar.progress(100)
-                    
-                    # Result Card
-                    diff = pred_price - display_price
-                    sig_color = "#00e676" if diff > 0 else "#ff1744"
-                    direction = "BULLISH 🚀" if diff > 0 else "BEARISH 🔻"
-                    
-                    c1, c2 = st.columns(2)
-                    c1.metric(f"AI Target ({prediction_option})", f"₹{pred_price:.2f}")
-                    c2.markdown(f"""
-                    <div style="background-color: {sig_color}20; padding: 10px; border-radius: 8px; border: 1px solid {sig_color}; text-align: center;">
-                        <h3 style="margin:0; color: {sig_color};">{direction}</h3>
-                        <p style="margin:0;">Potential: {diff:+.2f}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    if len(scaled_data) > 60:
+                        x_train, y_train = [], []
+                        for i in range(60, len(scaled_data)):
+                            x_train.append(scaled_data[i-60:i, 0])
+                            y_train.append(scaled_data[i, 0])
+                        
+                        x_train, y_train = np.array(x_train), np.array(y_train)
+                        x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+                        
+                        model = Sequential()
+                        model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
+                        model.add(LSTM(50, return_sequences=False))
+                        model.add(Dense(25))
+                        model.add(Dense(1))
+                        model.compile(optimizer='adam', loss='mean_squared_error')
+                        model.fit(x_train, y_train, batch_size=1, epochs=1, verbose=0) # Fast epoch
+                        
+                        last_60 = scaled_data[-60:].reshape(1, 60, 1)
+                        pred = scaler.inverse_transform(model.predict(last_60))[0][0]
+                        
+                        diff = pred - l_price
+                        signal = "BUY 🚀" if diff > 0 else "SELL 🔻"
+                        
+                        col_a, col_b = st.columns(2)
+                        col_a.metric(f"AI Prediction ({prediction_range})", f"₹{pred:.2f}")
+                        col_b.metric("Signal Strength", signal, f"{diff:+.2f}")
+                    else:
+                        st.warning("Not enough data points for AI analysis.")
 
-                # --- NEWS FEED ---
-                st.markdown("---")
-                st.subheader("📰 Market Sentiment")
-                news = get_news_sentiment(final_ticker)
-                
-                if news:
-                    for n in news:
-                        st.markdown(f"**{n['Sentiment']}** [{n['Title']}]({n['Link']})")
+                    # NEWS SECTION
+                    st.markdown("---")
+                    st.subheader(f"📰 News for {ticker_symbol}")
+                    
+                    news_list = get_news_with_sources(ticker_symbol.replace(".NS", "").replace(".BO", ""))
+                    if news_list:
+                        for item in news_list:
+                            st.markdown(f"""
+                            <div class="news-card">
+                                <div style="display:flex; justify-content:space-between; font-size:12px; color:#888;">
+                                    <span>🏛️ {item['source']}</span>
+                                    <span>{item['sentiment']}</span>
+                                </div>
+                                <a href="{item['link']}" target="_blank" style="text-decoration:none; color:#eee; font-weight:bold; font-size:15px;">
+                                    {item['title']}
+                                </a>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info("No specific news found.")
                 else:
-                    st.info("No News Found")
-
-            else:
-                st.error("❌ Data Unavailable. Market might be closed or Ticker is invalid.")
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-else:
-    st.info("👈 Select an asset from the sidebar and click 'Run Analysis' to start!")
+                    st.error("Data fetch failed. Ticker might be invalid or market closed.")
+            except Exception as e:
+                st.error(f"Analysis Error: {e}")

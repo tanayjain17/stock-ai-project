@@ -6,6 +6,7 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 import plotly.graph_objects as go
+from textblob import TextBlob
 
 # 1. SETUP PAGE
 st.set_page_config(page_title="Super Stock AI (Pro)", layout="wide")
@@ -59,6 +60,34 @@ def add_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
+# --- NEWS SENTIMENT FUNCTION (NEW) ---
+def get_news_sentiment(ticker_symbol):
+    try:
+        stock = yf.Ticker(ticker_symbol)
+        news = stock.news
+        news_data = []
+        
+        if news:
+            for item in news[:5]: # Get top 5 headlines
+                title = item.get('title', 'No Title')
+                link = item.get('link', '#')
+                
+                # Analyze Sentiment
+                analysis = TextBlob(title)
+                polarity = analysis.sentiment.polarity
+                
+                if polarity > 0.05:
+                    sentiment = "🟢 Positive"
+                elif polarity < -0.05:
+                    sentiment = "🔴 Negative"
+                else:
+                    sentiment = "⚪ Neutral"
+                    
+                news_data.append({'Title': title, 'Link': link, 'Sentiment': sentiment})
+        return news_data
+    except Exception as e:
+        return []
+
 # 3. MAIN LOGIC
 if st.sidebar.button("Analyze & Predict"):
     
@@ -107,7 +136,6 @@ if st.sidebar.button("Analyze & Predict"):
             st.subheader(f"Price Chart ({ticker})")
             fig = go.Figure()
             
-            # Formating X-Axis labels based on view
             date_fmt = '%Y-%m-%d' if interval == '1d' else '%Y-%m-%d %H:%M'
             
             fig.add_trace(go.Candlestick(
@@ -174,12 +202,9 @@ if st.sidebar.button("Analyze & Predict"):
                 # Results Display
                 curr_price = data['Close'].iloc[-1].item()
                 
-                # --- FIXED TIMESTAMP LOGIC ---
                 if interval == '1d':
-                    # If daily, show only Date (e.g., 06-Feb-2026)
                     last_time = data.index[-1].strftime('%d-%b-%Y')
                 else:
-                    # If intraday, show Time (e.g., 03:30 PM)
                     last_time = data.index[-1].strftime('%H:%M %p')
                 
                 diff = final_val - curr_price
@@ -195,9 +220,22 @@ if st.sidebar.button("Analyze & Predict"):
                     st.success(f"🚀 AI Signal: BULLISH (Up by ₹{diff:.2f})")
                 else:
                     st.error(f"🔻 AI Signal: BEARISH (Down by ₹{abs(diff):.2f})")
-                    
             else:
                 st.warning("⚠️ Not enough data for AI prediction.")
+            
+            # --- NEWS SECTION (NEW) ---
+            st.markdown("---")
+            st.markdown("### 📰 Latest News & Sentiment")
+            
+            news_items = get_news_sentiment(ticker)
+            if news_items:
+                for news in news_items:
+                    col_s, col_t = st.columns([1, 4])
+                    col_s.write(f"**{news['Sentiment']}**")
+                    col_t.markdown(f"[{news['Title']}]({news['Link']})")
+            else:
+                st.info("No recent news found for this ticker.")
+                
         else:
             st.error("No data found. Market might be closed or ticker is invalid.")
             

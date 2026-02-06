@@ -4,70 +4,83 @@ import google.generativeai as genai
 import os
 import time
 
-# 1. SETUP: Configure the AI with your Key
-# We look for the key in the environment variables for security
-genai.configure(api_key=os.environ)
+# ✅ Setup Gemini API correctly
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-2.0-flash')
 
-# 2. TARGETS: Silver Futures (SI=F) and Stocks
-tickers = 
+# ✅ Tickers to analyze
+tickers = ["RELIANCE.NS", "TCS.NS", "SI=F"]
+
 
 def analyze_market(ticker):
-    # A. GET DATA: Download last 1 year of data from Yahoo Finance
-    # We use 'SI=F' for Silver Futures
+    # A. Get Data
     df = yf.download(ticker, period="1y", interval="1d")
-    
+
     if df.empty:
         return f"Error: No data found for {ticker}"
 
-    # B. CALCULATE INDICATORS (The Math)
-    # RSI (Momentum): Is it overbought?
-    df = df.ta.rsi(length=14)
-    # SMA (Trend): Is the price above the 200-day average?
-    df = df.ta.sma(length=200)
-    # MACD (Momentum strength)
-    macd = df.ta.macd(fast=12, slow=26, signal=9)
-    df = df.join(macd)
+    # B. Indicators
+    df.ta.rsi(length=14, append=True)
+    df.ta.sma(length=200, append=True)
+    df.ta.macd(fast=12, slow=26, signal=9, append=True)
 
-    # Get the latest row of data
     latest = df.iloc[-1]
 
-    # C. THE "PROPER PROMPT" 
-    # This is the strict instruction we send to the AI
+    # ✅ AI Score (Danelfin style)
+    score = 0
+    reasons = []
+
+    if 40 < latest['RSI_14'] < 70:
+        score += 3
+        reasons.append("Healthy RSI")
+
+    if latest['Close'] > latest['SMA_200']:
+        score += 3
+        reasons.append("Above 200 SMA")
+
+    if latest['MACDh_12_26_9'] > 0:
+        score += 2
+        reasons.append("Positive MACD momentum")
+
+    # C. Prompt for Gemini
     prompt = f"""
-    You are a professional Financial Analyst AI. 
-    Analyze the following technical indicators for {ticker} as of today.
-    
-    DATA CONTEXT:
-    - Current Price: {latest['Close']:.2f}
-    - RSI (14-day): {latest:.2f} (Over 70=Overbought, Under 30=Oversold)
-    - 200-Day SMA: {latest:.2f} (Price above this = Long Term Bullish)
-    - MACD Histogram: {latest:.4f} (Positive = Upward Momentum)
+You are a professional Financial Analyst AI.
 
-    TASK:
-    1. Determine the Market Regime (Bullish/Bearish/Neutral).
-    2. Suggest a specific strategy (Buy, Sell, or Wait).
-    3. If this is Silver (SI=F), account for high volatility and "fake-out" moves.
+Analyze the following technical indicators for {ticker}.
 
-    OUTPUT FORMAT:
-    - Verdict:
-    - Confidence: [0-100%]
-    - Reasoning: [One concise paragraph]
-    """
+DATA:
+- Current Price: {latest['Close']:.2f}
+- RSI (14): {latest['RSI_14']:.2f}
+- 200 SMA: {latest['SMA_200']:.2f}
+- MACD Histogram: {latest['MACDh_12_26_9']:.4f}
 
-    # D. SEND TO CLOUD BRAIN
+AI SCORE: {score}/8
+Reasons: {reasons}
+
+TASK:
+1. Determine market regime (Bullish/Bearish/Neutral).
+2. Suggest Buy, Sell, or Wait.
+3. If Silver (SI=F), consider high volatility.
+
+OUTPUT:
+- Verdict
+- Confidence
+- Reasoning
+"""
+
     response = model.generate_content(prompt)
     return response.text
 
-# 3. RUN THE ANALYSIS
+
+# ✅ Run for all tickers
 if __name__ == "__main__":
     print("--- STARTING AI ANALYSIS ---")
+
     for t in tickers:
         try:
-            print(f"\nAnalyzing {t}...")
+            print(f"\nAnalyzing {t}...\n")
             result = analyze_market(t)
             print(result)
-            # Sleep 4 seconds to respect the Free Tier rate limits (15 requests/min)
-            time.sleep(4) 
+            time.sleep(4)
         except Exception as e:
             print(f"Failed to analyze {t}: {e}")

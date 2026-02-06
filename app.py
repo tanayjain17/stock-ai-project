@@ -13,7 +13,7 @@ from datetime import datetime
 import time
 import tensorflow as tf
 
-# --- 0. SEED SETTING (Fixes Random Flipping) ---
+# --- 0. SEED SETTING ---
 np.random.seed(42)
 tf.random.set_seed(42)
 
@@ -31,16 +31,15 @@ st.markdown("""
         text-align: center;
         box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .news-card {
-        background-color: #151922;
-        padding: 15px;
-        border-radius: 8px;
-        margin-bottom: 12px;
-        border-left: 5px solid #2962ff;
-        transition: transform 0.2s;
+    .live-badge {
+        background-color: #00e676;
+        color: black;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: bold;
+        vertical-align: middle;
     }
-    .news-card:hover { transform: translateX(5px); background-color: #1a1f2b; }
-    section[data-testid="stSidebar"] { background-color: #12151e; border-right: 1px solid #2a2f3d; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,15 +66,12 @@ COMMODITIES_GLOBAL = {
 # --- 3. HELPER FUNCTIONS ---
 
 def get_currency_symbol(ticker):
-    # If ticker ends with .NS, .BO or starts with ^ (Indian Indices), return Rupee
-    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"):
-        return "₹"
-    else:
-        # Otherwise assume Global/US (Commodities, Crypto, US Stocks)
-        return "$"
+    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"): return "₹"
+    else: return "$"
 
 def get_live_price(symbol):
     try:
+        # Use fast_info for instant data
         stock = yf.Ticker(symbol)
         price = stock.fast_info.last_price
         prev_close = stock.fast_info.previous_close
@@ -83,28 +79,10 @@ def get_live_price(symbol):
     except:
         return 0.0, 0.0, 0.0
 
-def get_news_with_sources(query_term):
-    try:
-        safe_query = urllib.parse.quote(query_term)
-        rss_url = f"https://news.google.com/rss/search?q={safe_query}&hl=en-IN&gl=IN&ceid=IN:en"
-        feed = feedparser.parse(rss_url)
-        news_items = []
-        for entry in feed.entries:
-            blob = TextBlob(entry.title)
-            pol = blob.sentiment.polarity
-            sentiment = "🟢 Bullish" if pol > 0.05 else "🔴 Bearish" if pol < -0.05 else "⚪ Neutral"
-            timestamp = time.mktime(entry.published_parsed) if 'published_parsed' in entry else 0
-            news_items.append({
-                "title": entry.title, "link": entry.link, "source": entry.get('source', {}).get('title', 'Google News'),
-                "date_str": entry.get("published", "")[:16], "timestamp": timestamp, "sentiment": sentiment
-            })
-        return sorted(news_items, key=lambda x: x['timestamp'], reverse=True)[:10]
-    except:
-        return []
-
 def add_technical_indicators(df):
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -112,135 +90,148 @@ def add_technical_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df.dropna()
 
+def train_ai_model(df):
+    # Features
+    data_features = df[['Close', 'RSI', 'SMA_50', 'EMA_20']].values
+    scaler = MinMaxScaler(feature_range=(0,1))
+    scaled_data = scaler.fit_transform(data_features)
+    
+    if len(scaled_data) < 60: return None, None, None
+    
+    X_train, y_train = [], []
+    for i in range(60, len(scaled_data)):
+        X_train.append(scaled_data[i-60:i]) 
+        y_train.append(scaled_data[i, 0])   
+    
+    X_train, y_train = np.array(X_train), np.array(y_train)
+    
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
+    model.add(Dropout(0.2)) 
+    model.add(LSTM(50, return_sequences=False))
+    model.add(Dropout(0.2))
+    model.add(Dense(25))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    model.fit(X_train, y_train, batch_size=16, epochs=5, verbose=0)
+    
+    # Predict
+    last_60 = scaled_data[-60:].reshape(1, 60, 4)
+    pred_scaled = model.predict(last_60)
+    
+    dummy_array = np.zeros((1, 4))
+    dummy_array[0, 0] = pred_scaled[0, 0]
+    pred_price = scaler.inverse_transform(dummy_array)[0, 0]
+    
+    return pred_price, model, scaler
+
 # --- 4. SIDEBAR ---
 st.sidebar.title("🔍 Market Scanner")
-view_mode = st.sidebar.radio("Navigation", ["🏠 Market Dashboard", "📈 Stock Analyzer", "🏦 ETFs & Funds", "🛢️ Global Commodities"])
+view_mode = st.sidebar.radio("Navigation", ["🏠 Market Dashboard", "📈 Stock Analyzer"])
 
 selected_ticker = "RELIANCE.NS"
 if view_mode == "📈 Stock Analyzer":
     stock_name = st.sidebar.selectbox("Top Stocks", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[stock_name]
-    if st.sidebar.radio("Exchange", ["NSE", "BSE"], horizontal=True) == "BSE":
-        selected_ticker = selected_ticker.replace(".NS", ".BO")
-    custom = st.sidebar.text_input("Or Type Ticker (e.g. IRFC)")
+    custom = st.sidebar.text_input("Or Type Ticker")
     if custom: selected_ticker = f"{custom.upper()}.NS"
-elif view_mode == "🏦 ETFs & Funds":
-    selected_ticker = ETFS_MFS[st.sidebar.selectbox("Select ETF", list(ETFS_MFS.keys()))]
-elif view_mode == "🛢️ Global Commodities":
-    selected_ticker = COMMODITIES_GLOBAL[st.sidebar.selectbox("Select Commodity", list(COMMODITIES_GLOBAL.keys()))]
 
-if view_mode != "🏠 Market Dashboard":
-    st.sidebar.markdown("---")
-    chart_range = st.sidebar.selectbox("Chart History", ["1 Day", "1 Week", "1 Month", "6 Months", "1 Year", "5 Years"], index=2)
+# --- 5. PAGE LOGIC ---
 
-# --- 5. DASHBOARD PAGE ---
-if view_mode == "🏠 Market Dashboard":
-    st.title("🌏 Indian Markets Live")
-    col1, col2, col3, col4 = st.columns(4)
-    # Added dynamic currency symbol logic here
-    for n, s, c in [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), ("BANK NIFTY", "^NSEBANK", col3), ("INDIA VIX", "^INDIAVIX", col4)]:
-        p, ch, pc = get_live_price(s)
-        curr = get_currency_symbol(s) # Check currency
-        clr = "#00e676" if ch >= 0 else "#ff1744"
-        with c:
-            st.markdown(f'<div class="metric-card" style="border-top: 3px solid {clr};"><div>{n}</div><div style="font-size:24px; font-weight:bold;">{curr}{p:,.2f}</div><div style="color:{clr};">{ch:+.2f} ({pc:+.2f}%)</div></div>', unsafe_allow_html=True)
-    st.markdown("---")
-    st.subheader("📰 Market News")
-    for n in get_news_with_sources("Indian Stock Market"):
-        st.markdown(f'<div class="news-card"><div style="display:flex; justify-content:space-between; color:#aaa; font-size:12px;"><span>{n["source"]}</span><span>{n["date_str"]}</span></div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold;">{n["title"]}</a><div style="font-size:12px; margin-top:5px;">{n["sentiment"]}</div></div>', unsafe_allow_html=True)
-
-# --- 6. ANALYSIS PAGE ---
-else:
-    st.title(f"⚡ {selected_ticker} Pro Analysis")
-    lp, lc, lpct = get_live_price(selected_ticker)
-    curr_sym = get_currency_symbol(selected_ticker) # Check currency
+# >>> THE MAGIC: AUTO-REFRESH FRAGMENT <<<
+# This section will auto-reload every 3 seconds WITHOUT refreshing the whole page
+@st.fragment(run_every=1)
+def show_live_price_and_chart(ticker):
+    curr_sym = get_currency_symbol(ticker)
+    
+    # 1. LIVE PRICE HEADER
+    lp, lc, lpct = get_live_price(ticker)
     clr = "#00e676" if lc >= 0 else "#ff1744"
     
-    st.markdown(f'<div style="background:#1e2330; padding:20px; border-radius:12px; display:flex; align-items:center; gap:20px;"><div><div style="color:#888;">LIVE PRICE</div><div style="font-size:42px; font-weight:bold; color:{clr};">{curr_sym}{lp:,.2f}</div></div><div style="background:{clr}15; color:{clr}; padding:5px 15px; border-radius:15px; font-weight:bold;">{lc:+.2f} ({lpct:+.2f}%)</div></div>', unsafe_allow_html=True)
-    st.write("")
+    st.markdown(f"""
+    <div style="background:#1e2330; padding:20px; border-radius:12px; display:flex; align-items:center; gap:20px; margin-bottom:20px;">
+        <div>
+            <div style="color:#888; font-size:12px;">LIVE PRICE <span class="live-badge">LIVE 🟢</span></div>
+            <div style="font-size:42px; font-weight:bold; color:{clr};">{curr_sym}{lp:,.2f}</div>
+        </div>
+        <div style="background:{clr}15; color:{clr}; padding:5px 15px; border-radius:15px; font-weight:bold;">
+            {lc:+.2f} ({lpct:+.2f}%)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
-    if st.button("🚀 Run Multi-Factor AI Analysis"):
-        with st.spinner("Fetching Data & Training AI with Indicators..."):
-            try:
-                # 1. Fetch Data
-                p_map = {"1 Day": "1d", "1 Week": "5d", "1 Month": "1mo", "6 Months": "6mo", "1 Year": "1y", "5 Years": "5y"}
-                period = p_map[chart_range]
-                interval = "5m" if period in ["1d", "5d"] else "1d"
-                df = yf.download(selected_ticker, period=period, interval=interval, progress=False)
-                if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
-                
-                if not df.empty and len(df) > 60:
-                    # 2. Add Indicators
-                    df = add_technical_indicators(df)
-                    
-                    # 3. Chart
-                    fig = go.Figure()
-                    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-                    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_50'], line=dict(color='orange', width=1), name="SMA 50"))
-                    fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='cyan', width=1), name="EMA 20"))
-                    fig.update_layout(height=500, xaxis_rangeslider_visible=False, template="plotly_dark", margin=dict(t=0,b=0,l=0,r=0))
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    # 4. ADVANCED AI TRAINING
-                    st.subheader("🧠 Multi-Factor AI Prediction")
-                    st.caption("Analyzing Price + RSI + SMA + EMA simultaneously")
-                    
-                    # Features
-                    data_features = df[['Close', 'RSI', 'SMA_50', 'EMA_20']].values
-                    scaler = MinMaxScaler(feature_range=(0,1))
-                    scaled_data = scaler.fit_transform(data_features)
-                    
-                    X_train, y_train = [], []
-                    for i in range(60, len(scaled_data)):
-                        X_train.append(scaled_data[i-60:i]) 
-                        y_train.append(scaled_data[i, 0])   
-                    
-                    X_train, y_train = np.array(X_train), np.array(y_train)
-                    
-                    # LSTM Model
-                    model = Sequential()
-                    model.add(LSTM(50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
-                    model.add(Dropout(0.2)) 
-                    model.add(LSTM(50, return_sequences=False))
-                    model.add(Dropout(0.2))
-                    model.add(Dense(25))
-                    model.add(Dense(1))
-                    model.compile(optimizer='adam', loss='mean_squared_error')
-                    model.fit(X_train, y_train, batch_size=16, epochs=5, verbose=0) 
-                    
-                    # Predict
-                    last_60 = scaled_data[-60:].reshape(1, 60, 4) 
-                    pred_scaled = model.predict(last_60)
-                    
-                    dummy_array = np.zeros((1, 4))
-                    dummy_array[0, 0] = pred_scaled[0, 0]
-                    pred_price = scaler.inverse_transform(dummy_array)[0, 0]
-                    
-                    diff = pred_price - lp
-                    color = "green" if diff > 0 else "red"
-                    signal = "STRONG BUY 🚀" if diff > 0 else "STRONG SELL 🔻"
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("AI Target Price", f"{curr_sym}{pred_price:.2f}")
-                    c2.metric("Signal", signal)
-                    c3.metric("Potential Move", f"{diff:+.2f}")
-                    
-                    # RSI Meter
-                    last_rsi = df['RSI'].iloc[-1]
-                    rsi_state = "Overbought (Risk)" if last_rsi > 70 else "Oversold (Buy Opp)" if last_rsi < 30 else "Neutral"
-                    st.progress(int(last_rsi))
-                    st.caption(f"RSI Momentum: {last_rsi:.2f} ({rsi_state})")
+    # 2. LIVE CHART (Updated every 3s)
+    # Fetch 1-minute intraday data for the live chart
+    try:
+        df_live = yf.download(ticker, period="1d", interval="1m", progress=False)
+        if isinstance(df_live.columns, pd.MultiIndex): df_live.columns = df_live.columns.droplevel(1)
+        
+        if not df_live.empty:
+            df_live = add_technical_indicators(df_live)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=df_live.index, open=df_live['Open'], high=df_live['High'], low=df_live['Low'], close=df_live['Close'], name="Price"))
+            # We show EMA on the live chart as it's a better 1-min indicator
+            fig.add_trace(go.Scatter(x=df_live.index, y=df_live['EMA_20'], line=dict(color='cyan', width=1), name="EMA 20"))
+            
+            fig.update_layout(
+                height=450, 
+                title=f"Live 1-Minute Chart ({ticker})",
+                template="plotly_dark", 
+                margin=dict(t=40,b=0,l=0,r=0),
+                xaxis_rangeslider_visible=False
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("Waiting for market data...")
+    except Exception as e:
+        st.error(f"Chart Error: {e}")
 
-                    # 5. NEWS
-                    st.markdown("---")
-                    st.subheader(f"📰 {selected_ticker} News")
-                    news = get_news_with_sources(selected_ticker.replace(".NS","").replace(".BO",""))
-                    if news:
-                        for n in news:
-                            st.markdown(f'<div class="news-card"><div style="display:flex; justify-content:space-between; font-size:12px; color:#aaa;"><span>{n["source"]}</span><span>{n["date_str"]}</span></div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold;">{n["title"]}</a><div style="font-size:12px; margin-top:5px;">{n["sentiment"]}</div></div>', unsafe_allow_html=True)
+# --- MAIN APP UI ---
+if view_mode == "🏠 Market Dashboard":
+    st.title("🌏 Live Market Dashboard")
+    # This dashboard block refreshes every 5 seconds
+    @st.fragment(run_every=1)
+    def show_index_dashboard():
+        col1, col2, col3 = st.columns(3)
+        for n, s, c in [("NIFTY 50", "^NSEI", col1), ("SENSEX", "^BSESN", col2), ("BANK NIFTY", "^NSEBANK", col3)]:
+            p, ch, pc = get_live_price(s)
+            clr = "#00e676" if ch >= 0 else "#ff1744"
+            curr = get_currency_symbol(s)
+            with c:
+                st.markdown(f'<div class="metric-card" style="border-top: 3px solid {clr};"><div>{n}</div><div style="font-size:24px; font-weight:bold;">{curr}{p:,.2f}</div><div style="color:{clr};">{ch:+.2f} ({pc:+.2f}%)</div></div>', unsafe_allow_html=True)
+    show_index_dashboard()
+
+else:
+    st.title(f"⚡ {selected_ticker} Live Station")
+    
+    # CALL THE AUTO-REFRESHING FRAGMENT
+    show_live_price_and_chart(selected_ticker)
+    
+    # 3. AI ANALYSIS (Manual Trigger - Too heavy for 3s loop)
+    st.write("")
+    st.markdown("### 🧠 Deep Analysis")
+    if st.button("Run AI Prediction Model"):
+        with st.spinner("Training Neural Network..."):
+            try:
+                # Fetch more data for training (1 Year)
+                df_train = yf.download(selected_ticker, period="1y", interval="1d", progress=False)
+                if isinstance(df_train.columns, pd.MultiIndex): df_train.columns = df_train.columns.droplevel(1)
+                
+                if not df_train.empty:
+                    df_train = add_technical_indicators(df_train)
+                    pred_price, _, _ = train_ai_model(df_train)
+                    
+                    if pred_price:
+                        curr_price, _, _ = get_live_price(selected_ticker)
+                        diff = pred_price - curr_price
+                        sig = "STRONG BUY 🚀" if diff > 0 else "STRONG SELL 🔻"
+                        c_sym = get_currency_symbol(selected_ticker)
+                        
+                        col1, col2 = st.columns(2)
+                        col1.metric("AI Target (1 Day)", f"{c_sym}{pred_price:.2f}")
+                        col2.metric("Signal Strength", sig, f"{diff:+.2f}")
                     else:
-                        st.info("No recent news found.")
-                else:
-                    st.error("Not enough data. Try a longer timeframe (at least 6 Months).")
+                        st.error("Not enough data for AI.")
             except Exception as e:
-                st.error(f"Analysis Failed: {e}")
+                st.error(f"AI Error: {e}")

@@ -24,12 +24,14 @@ np.random.seed(42)
 tf.random.set_seed(42)
 
 # --------------------------
-# 1. STYLING + CONFIG
+# 1. STYLING & THEME
 st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡")
+
 st.markdown("""
 <style>
 .stApp { background-color: #0e1117; color: white; }
-.metric-card { background-color: #1e2330; border:1px solid #2a2f3d; border-radius:8px; padding:15px; text-align:center; margin-bottom:10px;}
+.metric-card { background-color: #1e2330; border:1px solid #2a2f3d; border-radius:10px; padding:15px; text-align:center; transition: transform 0.2s;}
+.metric-card:hover { transform: scale(1.02); }
 .status-badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;}
 .status-live { background-color:#00e676; color:black; }
 .status-closed { background-color:#ff1744; color:white; }
@@ -40,7 +42,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 2. DATABASES
+# 2. STOCK DATABASES
 NIFTY_100_TICKERS = {
     "Reliance Industries":"RELIANCE.NS","TCS":"TCS.NS","HDFC Bank":"HDFCBANK.NS",
     "ICICI Bank":"ICICIBANK.NS","Infosys":"INFY.NS","SBI":"SBIN.NS",
@@ -129,9 +131,12 @@ def add_indicators(df):
     return df.dropna()
 
 # --------------------------
-# 4. LOAD PRETRAINED MODEL + SCALER
+# 4. PRETRAINED MODEL
 @st.cache_resource(show_spinner=True)
 def load_pretrained_model():
+    import gdown, joblib
+    from tensorflow.keras.models import load_model
+    import os
     if not os.path.exists("stock_model.h5"):
         MODEL_ID = "YOUR_MODEL_FILE_ID"
         gdown.download(f"https://drive.google.com/uc?id={MODEL_ID}", "stock_model.h5", quiet=False)
@@ -145,7 +150,7 @@ def load_pretrained_model():
 pretrained_model, pretrained_scaler = load_pretrained_model()
 
 # --------------------------
-# 5. TRAIN AI FUNCTION
+# 5. AI PREDICTION FUNCTION
 def train_ai(df):
     df_ai = df[['Close','RSI','SMA_50','EMA_20']].copy()
     scaler = MinMaxScaler()
@@ -173,69 +178,65 @@ def train_ai(df):
     pred_price = scaler.inverse_transform(dummy)[0,0]
     return pred_price, df['ATR'].iloc[-1]
 
-# --------------------------
-# 6. CACHED AI PREDICTION
-@st.cache_data(show_spinner=True)
+@st.cache_data(show_spinner=False)
 def compute_ai_prediction(df):
     return train_ai(df)
 
 # --------------------------
-# 7. SIDEBAR NAVIGATION
+# 6. SIDEBAR
 st.sidebar.title("⚡ Market Pulse AI")
-nav_options=["🏠 Market Dashboard","📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities"]
-view = st.sidebar.radio("Go to:", nav_options)
-selected_ticker = None
+nav_options=["🏠 Market Dashboard","📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities","💹 Top 5 AI Picks"]
+view=st.sidebar.radio("Go to:",nav_options)
 
-if view == "📈 Stock Analyzer":
-    t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
+selected_ticker="RELIANCE.NS"
+
+if view=="📈 Stock Analyzer":
+    t_name = st.sidebar.selectbox("Nifty 100 List",list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
     custom = st.sidebar.text_input("Or Search Stock (e.g. ZOMATO)")
-    if custom: selected_ticker = f"{custom.upper()}.NS"
-elif view == "🏦 ETFs & Mutual Funds":
-    t_name = st.sidebar.selectbox("Popular ETFs", list(ETFS_MFS.keys()))
+    if custom: selected_ticker=f"{custom.upper()}.NS"
+elif view=="🏦 ETFs & Mutual Funds":
+    t_name = st.sidebar.selectbox("Popular ETFs",list(ETFS_MFS.keys()))
     selected_ticker = ETFS_MFS[t_name]
     custom = st.sidebar.text_input("Or Search ETF")
-    if custom: selected_ticker = f"{custom.upper()}.NS"
-elif view == "🛢️ Global Commodities":
-    t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
+    if custom: selected_ticker=f"{custom.upper()}.NS"
+elif view=="🛢️ Global Commodities":
+    t_name = st.sidebar.selectbox("Global Assets",list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
 # --------------------------
-# 8. LIVE MARKET DASHBOARD
-if view == "🏠 Market Dashboard":
+# 7. MARKET DASHBOARD
+if view=="🏠 Market Dashboard":
     st.title("🌏 Market Dashboard")
-    c1, c2, c3 = st.columns(3)
-    
-    for (name, symbol), col in zip(INDICES.items(), [c1, c2, c3]):
-        is_op, status_txt = is_market_open(symbol)
-        p, c, pct = get_live_data(symbol)
-        clr = "#00e676" if c >= 0 else "#ff1744"
-        dot = "🟢" if is_op else "🔴"
+    c1,c2,c3=st.columns(3)
+    for (name,symbol),col in zip(INDICES.items(),[c1,c2,c3]):
+        is_op,status_txt = is_market_open(symbol)
+        p,c,pct = get_live_data(symbol)
+        clr="#00e676" if c>=0 else "#ff1744"
+        dot="🟢" if is_op else "🔴"
         with col:
             st.markdown(f"""
-            <div class="metric-card" style="border-top: 3px solid {clr};">
-                <div style="font-size:12px; color:#888;">{dot} {name}</div>
+            <div class="metric-card" style="border-top:3px solid {clr};">
+                <div style="font-size:12px; color:#888">{dot} {name}</div>
                 <div style="font-size:26px; font-weight:bold;">₹{p:,.2f}</div>
                 <div style="color:{clr}; font-weight:bold;">{c:+.2f} ({pct:+.2f}%)</div>
             </div>
-            """, unsafe_allow_html=True)
-
+            """,unsafe_allow_html=True)
     st.markdown("---")
     st.subheader("📰 Top Market Headlines")
-    news = get_news("Indian Stock Market")
-    for n in news:
-        st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
+    news=get_news("Indian Stock Market")
+    for n in news[:5]:
+        st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>',unsafe_allow_html=True)
 
 # --------------------------
-# 9. STOCK/ETF/COMMODITY VIEW
-if selected_ticker:
-    # Live Header
-    is_open, _ = is_market_open(selected_ticker)
-    curr_sym = get_currency(selected_ticker)
-    lp, lc, lpct = get_live_data(selected_ticker)
-    color = "#00e676" if lc>=0 else "#ff1744"
+# 8. STOCK ANALYZER
+if view in ["📈 Stock Analyzer","🏦 ETFs & Mutual Funds","🛢️ Global Commodities"]:
+    st.subheader(f"📊 {selected_ticker} Analysis")
+    is_open,_=is_market_open(selected_ticker)
+    curr_sym=get_currency(selected_ticker)
+    lp,lc,lpct=get_live_data(selected_ticker)
+    color="#00e676" if lc>=0 else "#ff1744"
     badge_html = f'<span class="status-badge status-live">🟢 LIVE</span>' if is_open else f'<span class="status-badge status-closed">🔴 CLOSED</span>'
-    
     st.markdown(f"""
     <div style="background:#1e2330; padding:20px; border-radius:12px; margin-bottom:10px; border-left:6px solid {color};">
         <div style="display:flex; justify-content:space-between;">
@@ -247,54 +248,68 @@ if selected_ticker:
             </div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
-
-    # Historical Chart
-    df_hist = yf.download(selected_ticker, period="1y", interval="1d")
-    df_hist = add_indicators(df_hist)
+    """,unsafe_allow_html=True)
     
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df_hist.index, open=df_hist['Open'], high=df_hist['High'],
-                                 low=df_hist['Low'], close=df_hist['Close'], name="Price"))
+    df_hist=yf.download(selected_ticker,period="1y",interval="1d")
+    df_hist=add_indicators(df_hist)
+    
+    # Candlestick chart
+    fig=go.Figure()
+    fig.add_trace(go.Candlestick(x=df_hist.index, open=df_hist['Open'], high=df_hist['High'], low=df_hist['Low'], close=df_hist['Close'], name="Price"))
     fig.add_trace(go.Scatter(x=df_hist.index, y=df_hist['SMA_50'], line=dict(color='green',width=2), name="SMA 50"))
     fig.add_trace(go.Scatter(x=df_hist.index, y=df_hist['EMA_20'], line=dict(color='orange',width=2), name="EMA 20"))
-    st.plotly_chart(fig, use_container_width=True)
-
+    st.plotly_chart(fig,use_container_width=True)
+    
     # AI Prediction
     st.subheader("🤖 AI Prediction")
     try:
-        pred_price, atr = compute_ai_prediction(df_hist)
+        pred_price, atr=compute_ai_prediction(df_hist)
         if pred_price:
-            diff = pred_price-lp
-            sig = "BUY 🚀" if diff>0 else "SELL 🔻"
+            curr,_,_=get_live_data(selected_ticker)
+            diff=pred_price-curr
+            sig="BUY 🚀" if diff>0 else "SELL 🔻"
             st.success(f"AI Target: {curr_sym}{pred_price:.2f}")
             st.markdown(f"Signal: **{sig}** (Potential: {diff:+.2f})")
             with st.expander("🔐 AI Trade Plan (Entry/SL/Targets)"):
-                sl=lp-1.5*atr if diff>0 else lp+1.5*atr
-                t1=lp+1*atr if diff>0 else lp-1*atr
-                t2=lp+2*atr if diff>0 else lp-2*atr
+                sl=curr-1.5*atr if diff>0 else curr+1.5*atr
+                t1=curr+1*atr if diff>0 else curr-1*atr
+                t2=curr+2*atr if diff>0 else curr-2*atr
                 st.markdown(f"""
                 <div class="trade-plan">
                 <h4 style="color:#4caf50">AI Trade Setup</h4>
-                <p>Entry: {lp:.2f}</p>
+                <p>Entry: {curr:.2f}</p>
                 <p>Stop Loss: {sl:.2f}</p>
                 <p>Target 1: {t1:.2f}</p>
                 <p>Target 2: {t2:.2f}</p>
                 </div>
-                """, unsafe_allow_html=True)
+                """,unsafe_allow_html=True)
     except Exception as e:
         st.warning(f"Prediction unavailable: {e}")
-
+    
     # News
-    st.subheader("📰 Market News")
-    news_items = get_news(selected_ticker.replace(".NS","").replace(".BO",""))
+    st.subheader("📰 Stock News")
+    news_items=get_news(selected_ticker.replace(".NS","").replace(".BO",""))
     if news_items:
         for n in news_items[:5]:
-            st.markdown(f'<div class="news-card"><a href="{n["link"]}" target="_blank" style="color:white; text-decoration:none;">{n["title"]}</a><div style="font-size:10px; color:#888">{n["date"]} • {n["sent"]}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="news-card"><a href="{n["link"]}" target="_blank" style="color:white; text-decoration:none;">{n["title"]}</a><div style="font-size:10px; color:#888">{n["date"]} • {n["sent"]}</div></div>',unsafe_allow_html=True)
     else:
         st.info("No news found.")
 
 # --------------------------
-# 10. AUTO REFRESH
-st_autorefresh = st.experimental_rerun
-st_autorefresh()
+# 9. TOP 5 AI PICKS
+if view=="💹 Top 5 AI Picks":
+    st.title("💹 Top 5 AI Stocks Tomorrow Potential")
+    universe=list(NIFTY_100_TICKERS.values())
+    progress_bar = st.progress(0)
+    scores=[]
+    
+    for i,symbol in enumerate(universe):
+        df=yf.download(symbol,period="1y",interval="1d")
+        df=add_indicators(df)
+        pred,_ = train_ai(df)
+        if pred:
+            curr,_,_ = get_live_data(symbol)
+            scores.append({'symbol':symbol,'pred':pred,'curr':curr,'diff':pred-curr})
+        progress_bar.progress((i+1)/len(universe))
+    
+    top5 = sorted(scores

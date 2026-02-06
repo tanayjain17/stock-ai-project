@@ -2,9 +2,10 @@ streamlit
 yfinance
 numpy
 pandas
-tensorflow-cpu
 scikit-learn
-joblib
+tensorflow
 plotly
 textblob
 feedparser
+pytz
+gdown

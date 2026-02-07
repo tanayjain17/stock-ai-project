@@ -8,7 +8,6 @@ import tensorflow as tf
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import joblib
-import gdown
 import os
 from datetime import datetime, time as dt_time
 import pytz
@@ -18,10 +17,10 @@ import urllib.parse
 import time
 import requests
 from streamlit_autorefresh import st_autorefresh
-import streamlit.components.v1 as components  # Required for StockTwits Widget
+import streamlit.components.v1 as components
 
 # --------------------------
-# 1. PAGE CONFIGURATION (Sidebar Collapsed)
+# 1. PAGE CONFIGURATION
 st.set_page_config(
     page_title="Groww-Style Dashboard", 
     layout="wide", 
@@ -38,16 +37,10 @@ def navigate_to(page_name):
     st.session_state.page = page_name
 
 # --------------------------
-# 3. MODERN "FUN" CSS (Glassmorphism + Gradients)
+# 3. MODERN "FUN" CSS
 st.markdown("""
 <style>
-    /* Global App Style */
-    .stApp { 
-        background-color: #0f1115; 
-        font-family: 'Inter', sans-serif; 
-    }
-    
-    /* Remove top padding */
+    .stApp { background-color: #0f1115; font-family: 'Inter', sans-serif; }
     .block-container { padding-top: 1rem; }
     
     /* GLASSMORPHISM CARDS */
@@ -66,74 +59,22 @@ st.markdown("""
         border-color: #00d09c;
     }
 
-    /* GRADIENT TEXTS */
-    .gradient-text-green {
-        background: -webkit-linear-gradient(45deg, #00d09c, #00ffaa);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 800;
-    }
-    .gradient-text-red {
-        background: -webkit-linear-gradient(45deg, #ff4b4b, #ff9068);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-weight: 800;
-    }
+    /* TEXT GRADIENTS */
+    .gradient-text-green { background: -webkit-linear-gradient(45deg, #00d09c, #00ffaa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; }
+    .gradient-text-red { background: -webkit-linear-gradient(45deg, #ff4b4b, #ff9068); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; }
+    
+    /* HEADERS */
+    .section-title { font-size: 22px; font-weight: 700; margin-top: 25px; margin-bottom: 15px; color: #e0e0e0; }
 
-    /* SECTION HEADERS */
-    .section-title {
-        font-size: 22px;
-        font-weight: 700;
-        margin-top: 25px;
-        margin-bottom: 15px;
-        color: #e0e0e0;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-
-    /* PRODUCT BUTTONS */
-    .product-btn {
-        background: linear-gradient(135deg, #2a2d3a 0%, #1f222e 100%);
-        border-radius: 16px;
-        padding: 15px;
-        text-align: center;
-        cursor: pointer;
-        border: 1px solid #333;
-        transition: 0.2s;
-    }
-    .product-btn:hover {
-        border-color: #4c8bf5;
-        background: linear-gradient(135deg, #323646 0%, #252936 100%);
-    }
-
-    /* NEWS ITEM */
-    .news-box {
-        padding: 12px;
-        border-radius: 12px;
-        background: #161920;
-        margin-bottom: 10px;
-        border-left: 3px solid #4c8bf5;
-    }
+    /* NEWS */
+    .news-box { padding: 12px; border-radius: 12px; background: #161920; margin-bottom: 10px; border-left: 3px solid #4c8bf5; }
     .news-link { color: #fff; text-decoration: none; font-weight: 500; font-size: 14px; }
     .news-link:hover { color: #4c8bf5; }
     .news-meta { font-size: 11px; color: #888; margin-top: 4px; }
     
-    /* ANALYTICS BUTTONS */
-    .ext-btn {
-        display: inline-block;
-        padding: 8px 16px;
-        margin: 5px;
-        border-radius: 20px;
-        background: #1E1E1E;
-        border: 1px solid #333;
-        color: white;
-        text-decoration: none;
-        font-size: 13px;
-        transition: 0.2s;
-    }
+    /* BUTTONS */
+    .ext-btn { display: inline-block; padding: 8px 16px; margin: 5px; border-radius: 20px; background: #1E1E1E; border: 1px solid #333; color: white; text-decoration: none; font-size: 13px; transition: 0.2s; }
     .ext-btn:hover { border-color: #00d09c; color: #00d09c; }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -141,7 +82,7 @@ st.markdown("""
 # 4. DATA POOLS
 INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
 
-# Scanner Pool for live most traded
+# Most Traded Scanner Pool
 SCANNER_POOL = [
     "ZOMATO.NS", "YESBANK.NS", "IDEA.NS", "TATASTEEL.NS", "RELIANCE.NS", 
     "HDFCBANK.NS", "SBIN.NS", "INFY.NS", "ITC.NS", "TATAMOTORS.NS",
@@ -219,8 +160,6 @@ def get_news_multi():
 # --------------------------
 # 8. DASHBOARD VIEW
 if view == "🏠 Market Dashboard":
-    
-    # A. INDICES
     st.markdown('<div class="section-title">📊 Market Indices</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     for (name, ticker), col in zip(INDICES.items(), [c1, c2, c3]):
@@ -236,7 +175,6 @@ if view == "🏠 Market Dashboard":
             </div>
             """, unsafe_allow_html=True)
 
-    # B. PRODUCTS & TOOLS
     st.markdown('<div class="section-title">🛠️ Products & Tools</div>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     def draw_tool(icon, name, page, col):
@@ -249,7 +187,6 @@ if view == "🏠 Market Dashboard":
     draw_tool("🤖", "AI Picks", "⭐ Top 5 AI Picks", c3)
     draw_tool("🛢️", "Commodities", "🛢️ Global Commodities", c4)
 
-    # C. REAL-TIME MOST TRADED
     st.markdown('<div class="section-title">🔥 Most Traded (Live)</div>', unsafe_allow_html=True)
     top_vol_df = scan_most_traded()
     if not top_vol_df.empty:
@@ -270,7 +207,6 @@ if view == "🏠 Market Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
 
-    # D. MARKET NEWS
     st.markdown("---")
     st.markdown('<div class="section-title">📰 Market Updates</div>', unsafe_allow_html=True)
     news = get_news_multi()
@@ -285,7 +221,7 @@ if view == "🏠 Market Dashboard":
             """, unsafe_allow_html=True)
 
 # --------------------------
-# 9. OTHER PAGES (AI, ANALYZER, ETC.)
+# 9. OTHER PAGES
 else:
     st.markdown(f'<div class="section-title">{view}</div>', unsafe_allow_html=True)
     if st.button("← Back to Dashboard"):
@@ -299,76 +235,101 @@ else:
             r = requests.get(lottie_url)
             st_lottie(r.json(), height=180)
         except: pass
-        st.warning("⚠️ AI Scan functionality is computationally heavy. Running a simplified scan for demo...")
-        
+        st.warning("⚠️ AI Scan running on limited pool for demo speed...")
+
     elif view == "📈 Stock Analyzer":
         
-        # 1. STOCK SELECTION
-        col_sel, col_empty = st.columns([1, 2])
-        with col_sel:
-            # Added a few popular stocks for quick access
-            stock_list = ["RELIANCE.NS", "TATASTEEL.NS", "ZOMATO.NS", "HDFCBANK.NS", "INFY.NS", "TATAMOTORS.NS"]
-            tick = st.selectbox("Select Stock", stock_list)
+        # 1. EXCHANGE & SEARCH
+        col_ex, col_search = st.columns([1, 3])
+        with col_ex:
+            exchange = st.radio("Exchange", ["NSE", "BSE"], horizontal=True)
         
-        # 2. TABS FOR ANALYSIS
-        tab1, tab2 = st.tabs(["📊 Technical Chart", "🗣️ Sentiments & Fundamentals"])
+        with col_search:
+            # Allows user to type ANY symbol
+            search_query = st.text_input("Search Stock (e.g., RELIANCE, ZOMATO, PAYTM)", "RELIANCE")
         
-        with tab1:
-            df = yf.download(tick, period="1y")
-            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-            fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', margin=dict(l=0, r=0, t=20, b=0), height=500)
-            st.plotly_chart(fig, use_container_width=True)
+        # Construct Ticker
+        suffix = ".NS" if exchange == "NSE" else ".BO"
+        clean_query = search_query.upper().strip()
+        final_ticker = f"{clean_query}{suffix}"
+        
+        # 2. FETCH DATA & FIX BLANK CHART ISSUE
+        try:
+            df = yf.download(final_ticker, period="1y", interval="1d", progress=False)
+            
+            # FIX: Check if data is empty or MultiIndex columns caused issues
+            if df.empty:
+                st.error(f"❌ No data found for **{final_ticker}**. Check spelling or try switching Exchange.")
+            else:
+                # Flat columns if necessary (yfinance update fix)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
 
-        with tab2:
-            st.subheader("Social Sentiment (StockTwits)")
-            st.markdown("Live community discussion for this stock.")
-            
-            # STOCKTWITS WIDGET INTEGRATION
-            # Removes '.NS' because StockTwits uses US/Global symbols usually, or just 'RELIANCE'
-            # We try the base symbol first.
-            clean_symbol = tick.replace(".NS", "")
-            
-            # Embedding the widget via HTML
-            components.html(f"""
-            <div id="stocktwits-widget-news"></div>
-            <script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script>
-            <script type="text/javascript">
-            STWT.Widget({{
-                container: 'stocktwits-widget-news', 
-                symbol: '{clean_symbol}', 
-                width: '100%', 
-                height: '400', 
-                limit: '15', 
-                scrollbars: 'true', 
-                streaming: 'true', 
-                title: '{clean_symbol} Live Stream', 
-                style: {{
-                    link_color: '48515c', 
-                    link_hover_color: '48515c', 
-                    header_text_color: 'ffffff', 
-                    border_color: '333333', 
-                    divider_color: '333333', 
-                    box_color: '161920', 
-                    stream_color: '161920', 
-                    text_color: 'ffffff', 
-                    time_color: '999999'
-                }}
-            }});
-            </script>
-            """, height=420, scrolling=True)
-            
-            st.markdown("---")
-            st.subheader("Fundamental Deep Dive")
-            st.markdown("Detailed fundamentals are not available via free APIs. Use these direct links to analyze on top Indian platforms:")
-            
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown(f"""<a href="https://www.screener.in/company/{clean_symbol}/" target="_blank" class="ext-btn">📊 View on Screener.in</a>""", unsafe_allow_html=True)
-            with c2:
-                # StockEdge uses IDs in URL, so we link to their search/home
-                st.markdown(f"""<a href="https://stockedge.com/search?query={clean_symbol}" target="_blank" class="ext-btn">📈 View on StockEdge</a>""", unsafe_allow_html=True)
-            with c3:
-                st.markdown(f"""<a href="https://www.google.com/finance/quote/{clean_symbol}:NSE" target="_blank" class="ext-btn">🌏 Google Finance</a>""", unsafe_allow_html=True)
+                # 3. TABS
+                tab1, tab2 = st.tabs(["📊 Technical Chart", "🗣️ Sentiments & Fundamentals"])
+                
+                with tab1:
+                    # Plotly Chart
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=df.index,
+                        open=df['Open'],
+                        high=df['High'],
+                        low=df['Low'],
+                        close=df['Close']
+                    )])
+                    fig.update_layout(
+                        template="plotly_dark", 
+                        plot_bgcolor='rgba(0,0,0,0)', 
+                        paper_bgcolor='rgba(0,0,0,0)', 
+                        margin=dict(l=0, r=0, t=20, b=0), 
+                        height=500,
+                        xaxis_rangeslider_visible=False
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                with tab2:
+                    st.subheader("Social Sentiment (StockTwits)")
+                    # StockTwits Widget
+                    components.html(f"""
+                    <div id="stocktwits-widget-news"></div>
+                    <script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script>
+                    <script type="text/javascript">
+                    STWT.Widget({{
+                        container: 'stocktwits-widget-news', 
+                        symbol: '{clean_query}', 
+                        width: '100%', 
+                        height: '400', 
+                        limit: '15', 
+                        scrollbars: 'true', 
+                        streaming: 'true', 
+                        title: '{clean_query} Live Stream', 
+                        style: {{
+                            link_color: '48515c', 
+                            link_hover_color: '48515c', 
+                            header_text_color: 'ffffff', 
+                            border_color: '333333', 
+                            divider_color: '333333', 
+                            box_color: '161920', 
+                            stream_color: '161920', 
+                            text_color: 'ffffff', 
+                            time_color: '999999'
+                        }}
+                    }});
+                    </script>
+                    """, height=420, scrolling=True)
+                    
+                    st.markdown("---")
+                    st.subheader("Fundamental Deep Dive")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.markdown(f"""<a href="https://www.screener.in/company/{clean_query}/" target="_blank" class="ext-btn">📊 View on Screener.in</a>""", unsafe_allow_html=True)
+                    with c2:
+                        st.markdown(f"""<a href="https://stockedge.com/search?query={clean_query}" target="_blank" class="ext-btn">📈 View on StockEdge</a>""", unsafe_allow_html=True)
+                    with c3:
+                        st.markdown(f"""<a href="https://www.google.com/finance/quote/{clean_query}:NSE" target="_blank" class="ext-btn">🌏 Google Finance</a>""", unsafe_allow_html=True)
+
+        except Exception as e:
+            st.error(f"Error loading data: {e}")
 
     else:
         st.info("Feature under construction.")

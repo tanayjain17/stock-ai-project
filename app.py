@@ -6,13 +6,11 @@ import plotly.graph_objects as go
 from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense
 import requests
 import feedparser
-from textblob import TextBlob
 import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
-import time
 
 # --------------------------
 # 1. PAGE CONFIGURATION
@@ -49,7 +47,7 @@ st.markdown("""
     /* NEWS */
     .news-box { background: #161920; padding: 12px; border-radius: 10px; margin-bottom: 8px; border-left: 3px solid #4c8bf5; }
     
-    /* BUTTON OVERRIDES */
+    /* BUTTONS */
     div.stButton > button { width: 100%; background: transparent; border: none; color: white; text-align: left; padding: 0; }
     div.stButton > button:hover { color: #00d09c; background: transparent; }
     
@@ -59,78 +57,54 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 4. DATA POOLS
+# 4. ROBUST DATA FETCHING (THE FIX)
+def robust_yf_download(ticker, period):
+    # This function handles the "Blank Graph" issue
+    try:
+        df = yf.download(ticker, period=period, progress=False)
+        
+        # FIX: Flatten MultiIndex columns (e.g. ('Close', 'RELIANCE.NS') -> 'Close')
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        # Ensure we have data
+        if df.empty: return None
+        return df
+    except: return None
+
+@st.cache_data(ttl=60)
+def get_nse_chain(symbol):
+    # Direct NSE Connection for F/O Data
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=headers, timeout=5)
+        
+        clean_sym = symbol.upper().replace(".NS","").replace("^","")
+        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={clean_sym}" if clean_sym in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-equities?symbol={clean_sym}"
+        
+        return session.get(url, headers=headers, timeout=5).json()
+    except: return None
+
+def get_currency_symbol(ticker):
+    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"): return "₹"
+    return "$"
+
+# --------------------------
+# 5. DATA POOLS
 INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
 SCANNER_POOL = ["RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "TCS.NS", "ITC.NS", "SBIN.NS", "BHARTIARTL.NS", "LICI.NS", "ZOMATO.NS"]
 
-# NEW: EXPANDED LISTS
 ETF_LIST = {
-    "Nifty BeES": "NIFTYBEES.NS", 
-    "Bank BeES": "BANKBEES.NS", 
-    "Silver BeES": "SILVERBEES.NS", 
-    "Gold BeES": "GOLDBEES.NS", 
-    "IT BeES": "ITBEES.NS", 
-    "Pharma BeES": "PHARMABEES.NS"
+    "Nifty BeES": "NIFTYBEES.NS", "Bank BeES": "BANKBEES.NS", 
+    "Silver BeES": "SILVERBEES.NS", "Gold BeES": "GOLDBEES.NS", 
+    "IT BeES": "ITBEES.NS", "Pharma BeES": "PHARMABEES.NS"
 }
 
 COMMODITY_LIST = {
-    "Gold (Global)": "GC=F", 
-    "Silver (Global)": "SI=F", 
-    "Crude Oil": "CL=F", 
-    "Natural Gas": "NG=F", 
-    "Copper": "HG=F"
+    "Gold ($)": "GC=F", "Silver ($)": "SI=F", 
+    "Crude Oil ($)": "CL=F", "Natural Gas ($)": "NG=F", "Copper ($)": "HG=F"
 }
-
-# --------------------------
-# 5. UTILITIES (Currency Fix)
-def get_currency_symbol(ticker):
-    # If it ends with .NS, .BO or starts with ^, it's Indian Rupee
-    if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"):
-        return "₹"
-    # Otherwise (Global Commodities/US Stocks), it's Dollar
-    return "$"
-
-def get_live_price(ticker):
-    try:
-        t = yf.Ticker(ticker)
-        return t.fast_info.last_price, t.fast_info.previous_close
-    except: return 0,0
-
-@st.cache_data(ttl=300)
-def get_news():
-    feeds = ["https://www.moneycontrol.com/rss/marketreports.xml", "https://www.livemint.com/rss/markets"]
-    items = []
-    for url in feeds:
-        try:
-            d = feedparser.parse(url)
-            for e in d.entries[:3]:
-                items.append({'title':e.title, 'link':e.link, 'src': url.split('.')[1]})
-        except: continue
-    return items
-
-@st.cache_data(ttl=60)
-def get_nse_chain(symbol="NIFTY"):
-    # Official NSE Scraper (Same as V6.0)
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36','Accept-Encoding': 'gzip, deflate, br','Accept-Language': 'en-US,en;q=0.9'}
-    session = requests.Session()
-    try:
-        session.get("https://www.nseindia.com", headers=headers, timeout=10)
-        clean_sym = symbol.upper().replace(".NS","").replace("^","")
-        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={clean_sym}" if clean_sym in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-equities?symbol={clean_sym}"
-        return session.get(url, headers=headers, timeout=10).json()
-    except: return None
-
-def run_ai_scan(ticker):
-    try:
-        df = yf.download(ticker, period="1y", progress=False)
-        if len(df) < 50: return None
-        df['SMA'] = df['Close'].rolling(50).mean()
-        curr = df['Close'].iloc[-1]
-        sma = df['SMA'].iloc[-1]
-        signal = "BUY" if curr > sma else "SELL"
-        target = curr * 1.05 if signal == "BUY" else curr * 0.95
-        return signal, target
-    except: return None
 
 # --------------------------
 # 6. SIDEBAR
@@ -147,27 +121,35 @@ if st.session_state.page == "🏠 Market Dashboard":
     st.markdown("### 📊 Market Overview")
     c1, c2, c3 = st.columns(3)
     for (name, sym), col in zip(INDICES.items(), [c1, c2, c3]):
-        curr, prev = get_live_price(sym)
-        chg = curr - prev
-        pct = (chg/prev)*100 if prev else 0
-        clr = "#00d09c" if chg >= 0 else "#ff4b4b"
-        with col:
-            st.markdown(f"""<div class="fun-card" style="border-top:3px solid {clr}"><div style="color:#aaa; font-size:12px;">{name}</div><div style="font-size:22px; font-weight:bold;">₹{curr:,.2f}</div><div style="color:{clr}; font-weight:bold;">{chg:+.2f} ({pct:+.2f}%)</div></div>""", unsafe_allow_html=True)
-            if st.button(f"Analyze {name}", key=name): navigate_to("📈 Stock Analyzer", sym)
+        df = robust_yf_download(sym, "5d")
+        if df is not None:
+            curr = df['Close'].iloc[-1]
+            prev = df['Close'].iloc[-2]
+            chg = curr - prev
+            pct = (chg/prev)*100
+            clr = "#00d09c" if chg >= 0 else "#ff4b4b"
+            with col:
+                st.markdown(f"""<div class="fun-card" style="border-top:3px solid {clr}"><div style="color:#aaa; font-size:12px;">{name}</div><div style="font-size:22px; font-weight:bold;">₹{curr:,.2f}</div><div style="color:{clr}; font-weight:bold;">{chg:+.2f} ({pct:+.2f}%)</div></div>""", unsafe_allow_html=True)
+                if st.button(f"Analyze {name}", key=name): navigate_to("📈 Stock Analyzer", sym)
 
     st.markdown("### 📰 Latest News")
-    news = get_news()
-    for n in news:
-        st.markdown(f"<div class='news-box'><a href='{n['link']}' target='_blank' style='color:white;text-decoration:none'>{n['title']}</a> <span style='color:#888;font-size:10px'>- {n['src']}</span></div>", unsafe_allow_html=True)
+    st.info("Fetching live news...")
+    # (Simplified news fetcher for reliability)
+    try:
+        d = feedparser.parse("https://www.moneycontrol.com/rss/marketreports.xml")
+        for e in d.entries[:4]:
+            st.markdown(f"<div class='news-box'><a href='{e.link}' target='_blank' style='color:white;text-decoration:none'>{e.title}</a></div>", unsafe_allow_html=True)
+    except: st.error("News feed unavailable")
 
 # --------------------------
-# 8. F/O DASHBOARD
+# 8. F/O DASHBOARD (NSE NATIVE)
 elif st.session_state.page == "📊 F/O Dashboard":
     st.markdown("### 📊 NSE Option Chain")
     c1, c2 = st.columns([1, 2])
     fo_sym = c1.text_input("Symbol", "NIFTY")
     
     data = get_nse_chain(fo_sym)
+    
     if data:
         try:
             recs = data['records']['data']
@@ -175,6 +157,7 @@ elif st.session_state.page == "📊 F/O Dashboard":
             sel_exp = st.selectbox("Expiry", exps)
             chain = [x for x in recs if x['expiryDate'] == sel_exp]
             spot = data['records']['underlyingValue']
+            
             st.metric(f"{fo_sym} Spot", f"₹{spot:,.2f}")
             
             ce_oi = sum([x['CE']['openInterest'] for x in chain if 'CE' in x])
@@ -189,17 +172,19 @@ elif st.session_state.page == "📊 F/O Dashboard":
             # Table
             rows = []
             for x in chain:
-                if x['strikePrice'] > spot*0.97 and x['strikePrice'] < spot*1.03:
+                if x['strikePrice'] > spot*0.98 and x['strikePrice'] < spot*1.02:
                     row = {'Strike': x['strikePrice']}
-                    if 'CE' in x: row.update({'CE LTP': x['CE']['lastPrice'], 'CE OI': x['CE']['openInterest']})
-                    if 'PE' in x: row.update({'PE LTP': x['PE']['lastPrice'], 'PE OI': x['PE']['openInterest']})
+                    if 'CE' in x: row.update({'CE Price': x['CE']['lastPrice'], 'CE OI': x['CE']['openInterest']})
+                    if 'PE' in x: row.update({'PE Price': x['PE']['lastPrice'], 'PE OI': x['PE']['openInterest']})
                     rows.append(row)
+            
             st.dataframe(pd.DataFrame(rows).set_index('Strike'), use_container_width=True)
-        except: st.error("Error parsing NSE data.")
-    else: st.error("NSE Connection Failed (Try Localhost).")
+        except: st.error("Could not parse NSE data. Market might be closed or API changed.")
+    else:
+        st.error("Connection to NSE failed. This usually happens on Cloud servers due to IP blocking. Try running locally.")
 
 # --------------------------
-# 9. STOCK ANALYZER (Universal)
+# 9. STOCK ANALYZER (FIXED CHARTS)
 elif st.session_state.page == "📈 Stock Analyzer":
     st.markdown("### 📈 Analyzer")
     if st.button("← Back"): navigate_to("🏠 Market Dashboard")
@@ -211,37 +196,40 @@ elif st.session_state.page == "📈 Stock Analyzer":
     
     if ex == "NSE": full = f"{sym}.NS"
     elif ex == "BSE": full = f"{sym}.BO"
-    else: full = sym # Global
+    else: full = sym 
     
-    # Currency Check
     curr_sym = get_currency_symbol(full)
+    df = robust_yf_download(full, "1y")
     
-    df = yf.download(full, period="1y", progress=False)
-    if not df.empty:
-        curr = df['Close'].iloc[-1]
+    if df is not None:
+        # Chart
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
         fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=500)
         st.plotly_chart(fig, use_container_width=True)
         
-        res = run_ai_scan(full)
-        if res:
-            sig, tgt = res
-            clr = "#00d09c" if sig=="BUY" else "#ff4b4b"
-            st.markdown(f"""<div style="background:{clr}20; border-left:5px solid {clr}; padding:15px; border-radius:10px;">
-                <h3 style="margin:0; color:{clr}">{sig} SIGNAL</h3>
-                <p style="margin:0">Current: {curr_sym}{curr:.2f} | Target: <b>{curr_sym}{tgt:.2f}</b></p></div>""", unsafe_allow_html=True)
-    else: st.error("Ticker not found.")
+        # Fundamentals
+        try:
+            info = yf.Ticker(full).info
+            f1, f2, f3 = st.columns(3)
+            f1.metric("Market Cap", f"{curr_sym}{info.get('marketCap',0)/10000000:.2f} Cr")
+            f2.metric("P/E", f"{info.get('trailingPE',0):.2f}")
+            f3.metric("Sector", info.get('sector','N/A'))
+        except: st.warning("Fundamentals unavailable via API.")
+        
+        # StockTwits (Fixed URL)
+        clean_twit = sym.replace(".NS","")
+        components.html(f"""<script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script><div id="stocktwits-widget-news"></div><script type="text/javascript">STWT.Widget({{container: 'stocktwits-widget-news', symbol: '{clean_twit}', width: '100%', height: '300', limit: '15', scrollbars: 'true', streaming: 'true', title: '{clean_twit} Stream', style: {{link_color: '48515c', link_hover_color: '48515c', header_text_color: 'ffffff', border_color: '333333', divider_color: '333333', box_color: '161920', stream_color: '161920', text_color: 'ffffff', time_color: '999999'}} }});</script>""", height=320, scrolling=True)
+        
+    else: st.error(f"No data found for {full}. Try checking the symbol.")
 
 # --------------------------
-# 10. ETF & COMMODITIES (With Correct Currency)
+# 10. ETF & COMMODITIES (FIXED)
 elif st.session_state.page == "🏦 ETFs & Commodities":
     st.markdown("### 🏦 ETFs & Global Commodities")
     type_ = st.radio("Asset Class", ["ETFs (India)", "Commodities (Global)"], horizontal=True)
     
-    # Select List based on radio
     active_list = ETF_LIST if type_ == "ETFs (India)" else COMMODITY_LIST
     
-    # Grid Buttons
     cols = st.columns(4)
     for i, (name, ticker) in enumerate(active_list.items()):
         with cols[i % 4]:
@@ -257,9 +245,13 @@ elif st.session_state.page == "⭐ Top 5 AI Picks":
         bar = st.progress(0)
         for i, t in enumerate(SCANNER_POOL[:5]):
             bar.progress((i+1)/5)
-            res = run_ai_scan(t)
-            if res: results.append((t, res[0], res[1]))
+            df = robust_yf_download(t, "1y")
+            if df is not None:
+                curr = df['Close'].iloc[-1]
+                sma = df['Close'].rolling(50).mean().iloc[-1]
+                sig = "BUY" if curr > sma else "SELL"
+                results.append((t, sig, curr))
         bar.empty()
-        for t, sig, tgt in results:
+        for t, sig, curr in results:
             clr = "#00d09c" if sig=="BUY" else "#ff4b4b"
-            st.markdown(f"<div class='fun-card' style='border-left:5px solid {clr}'><b>{t}</b>: {sig} -> Tgt {tgt:.1f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='fun-card' style='border-left:5px solid {clr}'><b>{t}</b>: {sig} @ ₹{curr:.2f}</div>", unsafe_allow_html=True)

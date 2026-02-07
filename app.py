@@ -90,6 +90,33 @@ def get_currency_symbol(ticker):
     if ticker.endswith(".NS") or ticker.endswith(".BO") or ticker.startswith("^"): return "₹"
     return "$"
 
+def add_indicators(df):
+    if df.empty: return df
+    df['SMA_50'] = df['Close'].rolling(50).mean()
+    df['ATR'] = (df['High'] - df['Low']).rolling(14).mean() # Volatility
+    return df.fillna(0)
+
+# AI Signal Generator
+def generate_ai_signal(df):
+    if len(df) < 50: return None
+    
+    # Simple Strategy: Price vs SMA + Trend
+    curr = df['Close'].iloc[-1]
+    sma = df['SMA_50'].iloc[-1]
+    atr = df['ATR'].iloc[-1]
+    
+    signal = "BUY" if curr > sma else "SELL"
+    
+    # Calculate Levels
+    if signal == "BUY":
+        stop_loss = curr - (1.5 * atr)
+        target = curr + (2.0 * atr)
+    else:
+        stop_loss = curr + (1.5 * atr)
+        target = curr - (2.0 * atr)
+        
+    return signal, stop_loss, target
+
 # --------------------------
 # 5. DATA POOLS
 INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
@@ -184,7 +211,7 @@ elif st.session_state.page == "📊 F/O Dashboard":
         st.error("Connection to NSE failed. This usually happens on Cloud servers due to IP blocking. Try running locally.")
 
 # --------------------------
-# 9. STOCK ANALYZER (FIXED CHARTS)
+# 9. STOCK ANALYZER (FIXED CHARTS & AI)
 elif st.session_state.page == "📈 Stock Analyzer":
     st.markdown("### 📈 Analyzer")
     if st.button("← Back"): navigate_to("🏠 Market Dashboard")
@@ -199,15 +226,46 @@ elif st.session_state.page == "📈 Stock Analyzer":
     else: full = sym 
     
     curr_sym = get_currency_symbol(full)
-    df = robust_yf_download(full, "1y")
+    
+    # 1. TIMEFRAME SELECTOR
+    t_tabs = st.tabs(["1M", "3M", "6M", "1Y", "MAX"])
+    time_map = {"1M": "1mo", "3M": "3mo", "6M": "6mo", "1Y": "1y", "MAX": "5y"}
+    
+    # We load based on the first tab initially, but in reality, let's just load 1Y data and slice it for speed
+    df = robust_yf_download(full, "2y")
     
     if df is not None:
+        df = add_indicators(df)
+        curr = df['Close'].iloc[-1]
+        
         # Chart
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
         fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=500)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Fundamentals
+        # 2. AI TRADE SIGNALS
+        res = generate_ai_signal(df)
+        if res:
+            sig, sl, tgt = res
+            clr = "#00d09c" if sig=="BUY" else "#ff4b4b"
+            
+            st.markdown(f"""
+            <div style="background:#1e2330; border:1px solid {clr}; border-radius:12px; padding:20px; margin-top:20px;">
+                <h2 style="color:{clr}; margin:0;">{sig} SIGNAL 🚀</h2>
+                <hr style="border-color:#333;">
+                <div style="display:flex; justify-content:space-between;">
+                    <div><span style="color:#888;">Entry</span><br><h3>{curr_sym}{curr:.2f}</h3></div>
+                    <div><span style="color:#ff4b4b;">Stop Loss</span><br><h3>{curr_sym}{sl:.2f}</h3></div>
+                    <div><span style="color:#00d09c;">Target</span><br><h3>{curr_sym}{tgt:.2f}</h3></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # 3. STOCKTWITS (Fixed)
+        clean_twit = sym.replace(".NS","")
+        components.html(f"""<script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script><div id="stocktwits-widget-news"></div><script type="text/javascript">STWT.Widget({{container: 'stocktwits-widget-news', symbol: '{clean_twit}', width: '100%', height: '300', limit: '15', scrollbars: 'true', streaming: 'true', title: '{clean_twit} Stream', style: {{link_color: '48515c', link_hover_color: '48515c', header_text_color: 'ffffff', border_color: '333333', divider_color: '333333', box_color: '161920', stream_color: '161920', text_color: 'ffffff', time_color: '999999'}} }});</script>""", height=320, scrolling=True)
+        
+        # 4. FUNDAMENTALS
         try:
             info = yf.Ticker(full).info
             f1, f2, f3 = st.columns(3)
@@ -215,11 +273,7 @@ elif st.session_state.page == "📈 Stock Analyzer":
             f2.metric("P/E", f"{info.get('trailingPE',0):.2f}")
             f3.metric("Sector", info.get('sector','N/A'))
         except: st.warning("Fundamentals unavailable via API.")
-        
-        # StockTwits (Fixed URL)
-        clean_twit = sym.replace(".NS","")
-        components.html(f"""<script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script><div id="stocktwits-widget-news"></div><script type="text/javascript">STWT.Widget({{container: 'stocktwits-widget-news', symbol: '{clean_twit}', width: '100%', height: '300', limit: '15', scrollbars: 'true', streaming: 'true', title: '{clean_twit} Stream', style: {{link_color: '48515c', link_hover_color: '48515c', header_text_color: 'ffffff', border_color: '333333', divider_color: '333333', box_color: '161920', stream_color: '161920', text_color: 'ffffff', time_color: '999999'}} }});</script>""", height=320, scrolling=True)
-        
+
     else: st.error(f"No data found for {full}. Try checking the symbol.")
 
 # --------------------------
@@ -247,10 +301,9 @@ elif st.session_state.page == "⭐ Top 5 AI Picks":
             bar.progress((i+1)/5)
             df = robust_yf_download(t, "1y")
             if df is not None:
-                curr = df['Close'].iloc[-1]
-                sma = df['Close'].rolling(50).mean().iloc[-1]
-                sig = "BUY" if curr > sma else "SELL"
-                results.append((t, sig, curr))
+                df = add_indicators(df)
+                res = generate_ai_signal(df)
+                if res: results.append((t, res[0], df['Close'].iloc[-1]))
         bar.empty()
         for t, sig, curr in results:
             clr = "#00d09c" if sig=="BUY" else "#ff4b4b"

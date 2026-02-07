@@ -44,42 +44,37 @@ st.markdown("""
     }
     .fun-card:hover { transform: translateY(-3px); border-color: #00d09c; }
     .news-box { background: #161920; padding: 12px; border-radius: 10px; margin-bottom: 8px; border-left: 3px solid #4c8bf5; }
-    
-    /* Button overrides to look like cards */
-    div.stButton > button {
-        width: 100%; background: transparent; border: none; color: white; text-align: left; padding: 0;
-    }
+    div.stButton > button { width: 100%; background: transparent; border: none; color: white; text-align: left; padding: 0; }
     div.stButton > button:hover { color: #00d09c; background: transparent; }
-    
-    /* Tables */
     .stDataFrame { border: 1px solid #333; border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 4. NSE CONNECTION LOGIC (The "Magic" Scraper)
-@st.cache_data(ttl=60) # Cache for 60s to prevent NSE blocking
+# 4. ROBUST NSE CONNECTION (The "Magic" Scraper)
+@st.cache_data(ttl=60) # Cache for 60s to avoid being blocked
 def get_nse_chain(symbol="NIFTY"):
-    # NSE blocks direct python requests. We must mimic a browser.
+    # Headers to mimic a real browser visiting NSE
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         'Accept-Encoding': 'gzip, deflate, br',
         'Accept-Language': 'en-US,en;q=0.9'
     }
     
-    # 1. Create Session & Get Cookies (Crucial Step)
     session = requests.Session()
     try:
-        session.get("https://www.nseindia.com", headers=headers, timeout=10) # Visit home to set cookies
+        # 1. Visit Homepage first to get "Cookies" (Crucial step)
+        session.get("https://www.nseindia.com", headers=headers, timeout=10)
         
-        # 2. Determine Endpoint
+        # 2. Determine Correct API URL
         clean_sym = symbol.upper().replace(".NS","").replace("^","")
         if clean_sym in ["NIFTY", "BANKNIFTY", "FINNIFTY"]:
             url = f"https://www.nseindia.com/api/option-chain-indices?symbol={clean_sym}"
         else:
+            # For stocks, NSE uses a different endpoint format
             url = f"https://www.nseindia.com/api/option-chain-equities?symbol={clean_sym}"
             
-        # 3. Fetch Data
+        # 3. Fetch Data with Cookies
         response = session.get(url, headers=headers, timeout=10)
         if response.status_code == 200:
             return response.json()
@@ -111,7 +106,6 @@ def get_news():
         except: continue
     return items
 
-# AI Logic (Simplified for speed)
 def run_ai_scan(ticker):
     try:
         df = yf.download(ticker, period="1y", progress=False)
@@ -119,7 +113,6 @@ def run_ai_scan(ticker):
         df['SMA'] = df['Close'].rolling(50).mean()
         curr = df['Close'].iloc[-1]
         sma = df['SMA'].iloc[-1]
-        # Simple Logic: Price > SMA = Bullish, else Bearish
         signal = "BUY" if curr > sma else "SELL"
         target = curr * 1.05 if signal == "BUY" else curr * 0.95
         return signal, target
@@ -175,7 +168,6 @@ elif st.session_state.page == "📊 F/O Dashboard":
     data = get_nse_chain(fo_sym)
     
     if data:
-        # Parse Data
         try:
             records = data['records']['data']
             expiry_list = data['records']['expiryDates']
@@ -221,7 +213,7 @@ elif st.session_state.page == "📊 F/O Dashboard":
             df_pe = pd.DataFrame(pe_data)
             df_chain = pd.merge(df_ce, df_pe, on='Strike')
             
-            # Filter range
+            # Filter range (Spot +/- 3%)
             df_chain = df_chain[(df_chain['Strike'] > spot*0.97) & (df_chain['Strike'] < spot*1.03)]
             
             st.markdown("#### Option Chain (Near Spot)")
@@ -229,10 +221,9 @@ elif st.session_state.page == "📊 F/O Dashboard":
             
         except Exception as e:
             st.error(f"Error parsing NSE data: {e}")
-            st.warning("NSE API structure might have changed or IP is blocked.")
     else:
         st.error("Failed to connect to NSE. If on Cloud, try Local Machine.")
-        st.caption("Fallback: NSE blocks cloud server IPs. This feature works best on your laptop.")
+        st.caption("Why? NSE blocks cloud server IPs. This feature works best on your laptop (Localhost).")
 
 # --------------------------
 # 9. VIEW: STOCK ANALYZER

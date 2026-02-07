@@ -317,7 +317,7 @@ if view != "⭐ Top 5 AI Picks":
 # --------------------------
 # 11. TOP 5 AI PICKS (Optimized for Cloud)
 else:
-    st.title("⭐ Top 5 AI Picks for Tomorrow")
+    st.title("⭐ AI Market Scanners")
     st.warning("Auto-refresh paused to allow AI computation.")
     
     if LOTTIE_AVAILABLE:
@@ -330,8 +330,8 @@ else:
 
     ai_results = []
     
-    # ⚠️ LIMITED TO 15 STOCKS TO PREVENT TIMEOUTS ON FREE CLOUD ⚠️
-    tickers_list = list(NIFTY_100_TICKERS.items())[:15] 
+    # ⚠️ LIMITED TO 20 STOCKS TO PREVENT TIMEOUTS ON FREE CLOUD ⚠️
+    tickers_list = list(NIFTY_100_TICKERS.items())[:20] 
     
     progress_bar = st.progress(0)
     total_tickers = len(tickers_list)
@@ -351,6 +351,7 @@ else:
                 if curr is None or curr == 0: continue
                 
                 diff = pred - curr
+                # We store everything
                 ai_results.append((name, symbol, diff, curr))
         except Exception:
             continue
@@ -358,16 +359,43 @@ else:
     progress_bar.empty()
 
     if ai_results:
-        top5 = sorted(ai_results, key=lambda x: x[2], reverse=True)[:5]
-        for name, symbol, diff, curr in top5:
-            sig = "BUY 🚀" if diff > 0 else "SELL 🔻"
-            color_card = "#2962ff" if diff > 0 else "#ff1744"
-            st.markdown(f"""
-            <div class="metric-card" style="border-top:3px solid {color_card}; margin-bottom: 10px;">
-                <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
-                <div style="font-size:24px; font-weight:bold;">Current: {curr:.2f}</div>
-                <div style="color:{color_card}; font-weight:bold;">Potential: {diff:+.2f} • Signal: {sig}</div>
-            </div>
-            """, unsafe_allow_html=True)
+        # Separate into BUY (Positive diff) and SELL (Negative diff)
+        buys = [x for x in ai_results if x[2] > 0]
+        sells = [x for x in ai_results if x[2] < 0]
+
+        # Sort Buys by highest positive potential (Descending)
+        top_buys = sorted(buys, key=lambda x: x[2], reverse=True)[:5]
+        
+        # Sort Sells by highest negative potential (Ascending / Most negative first)
+        top_sells = sorted(sells, key=lambda x: x[2])[:5]
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("🚀 Top 5 BUY Calls")
+            if not top_buys:
+                st.info("No strong Buy signals found.")
+            for name, symbol, diff, curr in top_buys:
+                st.markdown(f"""
+                <div class="metric-card" style="border-top:3px solid #00e676; margin-bottom: 10px;">
+                    <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
+                    <div style="font-size:24px; font-weight:bold;">₹{curr:.2f}</div>
+                    <div style="color:#00e676; font-weight:bold;">Upside: +{diff:.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with col2:
+            st.subheader("🔻 Top 5 SELL Calls")
+            if not top_sells:
+                st.info("No strong Sell signals found.")
+            for name, symbol, diff, curr in top_sells:
+                st.markdown(f"""
+                <div class="metric-card" style="border-top:3px solid #ff1744; margin-bottom: 10px;">
+                    <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
+                    <div style="font-size:24px; font-weight:bold;">₹{curr:.2f}</div>
+                    <div style="color:#ff1744; font-weight:bold;">Downside: {diff:.2f}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
     else:
-        st.warning("No high-probability AI picks found in the scan list.")
+        st.warning("No AI picks available. Try refreshing or checking market hours.")

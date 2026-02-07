@@ -1,8 +1,4 @@
 import streamlit as st
-
-# 1. PAGE CONFIGURATION (Must be the first st command)
-st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡")
-
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -23,23 +19,26 @@ import time
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# Optional Lottie loader
-try:
-    from streamlit_lottie import st_lottie
-    LOTTIE_AVAILABLE = True
-except ImportError:
-    LOTTIE_AVAILABLE = False
+# 1. PAGE CONFIGURATION
+st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡")
 
 # --------------------------
-# 0. SEED & SETTINGS
+# 2. SIDEBAR NAVIGATION (Moved to top to control refresh)
+st.sidebar.title("⚡ Market Pulse AI")
+nav_options = ["🏠 Market Dashboard", "📈 Stock Analyzer", "🏦 ETFs & Mutual Funds", "🛢️ Global Commodities", "⭐ Top 5 AI Picks"]
+view = st.sidebar.radio("Go to:", nav_options)
+
+# --------------------------
+# 3. CONDITIONAL AUTO REFRESH
+# Only refresh if we are NOT on the "Top 5 AI Picks" page
+if view != "⭐ Top 5 AI Picks":
+    st_autorefresh(interval=30000, key="dashboard_refresh")
+
+# --------------------------
+# 4. SEED & STYLING
 np.random.seed(42)
 tf.random.set_seed(42)
 
-# Refresh every 30 sec (Increased from 15s to avoid rate limits on Cloud)
-st_autorefresh(interval=30000, key="dashboard_refresh")
-
-# --------------------------
-# 2. PAGE STYLING
 st.markdown("""
 <style>
 .stApp { background-color: #0e1117; color: white; }
@@ -54,8 +53,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Optional Lottie loader
+try:
+    from streamlit_lottie import st_lottie
+    LOTTIE_AVAILABLE = True
+except ImportError:
+    LOTTIE_AVAILABLE = False
+
 # --------------------------
-# 3. DATABASES
+# 5. DATABASES
 INDICES = {"NIFTY 50": "^NSEI","SENSEX": "^BSESN","BANK NIFTY": "^NSEBANK"}
 
 NIFTY_100_TICKERS = {
@@ -77,7 +83,7 @@ ETFS_MFS = {
 COMMODITIES_GLOBAL = {"Gold":"GC=F","Silver":"SI=F","Crude Oil":"CL=F","Natural Gas":"NG=F","Copper":"HG=F"}
 
 # --------------------------
-# 4. UTILITIES
+# 6. UTILITIES
 def is_market_open(ticker):
     utc_now = datetime.now(pytz.utc)
     ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
@@ -91,7 +97,6 @@ def get_currency(ticker):
 def get_live_data(symbol):
     try:
         stock = yf.Ticker(symbol)
-        # Using fast_info for speed on cloud
         price = stock.fast_info.last_price
         prev = stock.fast_info.previous_close
         if price is None or prev is None: return 0.0, 0.0, 0.0
@@ -140,13 +145,12 @@ def add_indicators(df):
     return df.fillna(0)
 
 # --------------------------
-# 5. LOAD PRETRAINED MODEL (Graceful Fallback)
+# 7. LOAD PRETRAINED MODEL (Graceful Fallback)
 @st.cache_resource(show_spinner=True)
 def load_pretrained_model():
     model = None
     scaler = None
-    # Dummy IDs - Since you likely don't have these files yet, 
-    # the code will skip to the fallback training.
+    # Dummy IDs
     MODEL_ID = "YOUR_MODEL_FILE_ID"
     SCALER_ID = "YOUR_SCALER_FILE_ID"
     
@@ -161,16 +165,15 @@ def load_pretrained_model():
                 gdown.download(f"https://drive.google.com/uc?id={SCALER_ID}", "stock_scaler.gz", quiet=False)
             scaler = joblib.load("stock_scaler.gz")
     except Exception:
-        pass # Fail silently and use fallback
-        
+        pass 
     return model, scaler
 
 pretrained_model, pretrained_scaler = load_pretrained_model()
 
 # --------------------------
-# 6. TRAIN AI FUNCTION (Fallback)
+# 8. TRAIN AI FUNCTION (Simplified for Cloud)
 def train_ai(df):
-    tf.keras.backend.clear_session() # Clear memory
+    tf.keras.backend.clear_session()
     df_ai = df[['Close','RSI','SMA_50','EMA_20']].fillna(0)
     if len(df_ai) < 60: return None, None
     
@@ -183,10 +186,9 @@ def train_ai(df):
         y.append(scaled[i, 0])
         
     X, y = np.array(X), np.array(y)
-    
     if len(X) == 0: return None, None
 
-    # Simpler model for Cloud Performance
+    # Lightweight model for cloud
     model = Sequential([
         LSTM(30, return_sequences=False, input_shape=(X.shape[1], 4)),
         Dense(1)
@@ -204,21 +206,14 @@ def train_ai(df):
     
     return pred_price, df['ATR'].iloc[-1]
 
-# --------------------------
-# 7. CACHE AI PREDICTION
-@st.cache_data(show_spinner=False, ttl=3600) # Cache for 1 hour to save resources
+@st.cache_data(show_spinner=False, ttl=3600)
 def compute_ai_prediction(df):
     return train_ai(df)
 
 # --------------------------
-# 8. SIDEBAR NAVIGATION
-st.sidebar.title("⚡ Market Pulse AI")
-nav_options = ["🏠 Market Dashboard", "📈 Stock Analyzer", "🏦 ETFs & Mutual Funds", "🛢️ Global Commodities", "⭐ Top 5 AI Picks"]
-view = st.sidebar.radio("Go to:", nav_options)
-selected_ticker = "RELIANCE.NS"
-
-# --------------------------
 # 9. SELECT TICKER LOGIC
+selected_ticker = "RELIANCE.NS" # Default
+
 if view == "📈 Stock Analyzer":
     t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
@@ -320,11 +315,11 @@ if view != "⭐ Top 5 AI Picks":
             st.warning(f"Prediction unavailable: {e}")
 
 # --------------------------
-# 14. TOP 5 AI PICKS (Optimized for Cloud)
+# 11. TOP 5 AI PICKS (Optimized for Cloud)
 else:
     st.title("⭐ Top 5 AI Picks for Tomorrow")
-    st.info("Computing AI Picks... (Limited to top 15 stocks for cloud performance)")
-
+    st.warning("Auto-refresh paused to allow AI computation.")
+    
     if LOTTIE_AVAILABLE:
         try:
             lottie_url = "https://assets1.lottiefiles.com/packages/lf20_usmfx6bp.json"
@@ -335,7 +330,7 @@ else:
 
     ai_results = []
     
-    # LIMITING TO FIRST 15 STOCKS to prevent Cloud Timeout
+    # ⚠️ LIMITED TO 15 STOCKS TO PREVENT TIMEOUTS ON FREE CLOUD ⚠️
     tickers_list = list(NIFTY_100_TICKERS.items())[:15] 
     
     progress_bar = st.progress(0)

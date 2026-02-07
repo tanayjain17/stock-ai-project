@@ -2,7 +2,6 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import requests
 import feedparser
 from streamlit_autorefresh import st_autorefresh
 
@@ -11,11 +10,15 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Pro Market Dashboard", layout="wide", page_icon="📈")
 
 # -------------------------------------------------
+# AUTO REFRESH (30s)
+st_autorefresh(interval=30000, key="refresh")
+
+# -------------------------------------------------
 # HELPERS
 
 def smart_download(ticker, period):
     try:
-        if ticker.startswith("^"):  # indices
+        if ticker.startswith("^"):
             interval = "15m" if period in ["1d", "5d"] else "1d"
         else:
             if period == "1d":
@@ -58,10 +61,9 @@ def generate_ai_signal(df):
 
 
 # -------------------------------------------------
+# CONSTANTS
 INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
 SCANNER_POOL = ["RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS"]
-
-st_autorefresh(interval=30000, key="refresh")
 
 # -------------------------------------------------
 # DASHBOARD
@@ -102,18 +104,43 @@ if df is not None:
     live = get_live_price(ticker)
     curr = live if live else df['Close'].iloc[-1]
 
-    # Chart
+    # ---------- CHART ----------
+    df_plot = df.copy().reset_index()
+
+    if tf in ["1d", "5d"]:
+        x_axis = list(range(len(df_plot)))  # continuous candles
+        hover_time = df_plot.iloc[:, 0]
+        show_ticks = False
+    else:
+        x_axis = df_plot.iloc[:, 0]
+        hover_time = df_plot.iloc[:, 0]
+        show_ticks = True
+
     fig = go.Figure(data=[go.Candlestick(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close']
+        x=x_axis,
+        open=df_plot['Open'],
+        high=df_plot['High'],
+        low=df_plot['Low'],
+        close=df_plot['Close'],
+        customdata=hover_time,
+        hovertemplate=
+        "Time: %{customdata}<br>" +
+        "Open: %{open}<br>" +
+        "High: %{high}<br>" +
+        "Low: %{low}<br>" +
+        "Close: %{close}<extra></extra>"
     )])
-    fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
+
+    fig.update_layout(
+        template="plotly_dark",
+        height=500,
+        xaxis_rangeslider_visible=False,
+        xaxis=dict(showticklabels=show_ticks)
+    )
+
     st.plotly_chart(fig, use_container_width=True)
 
-    # AI CARD
+    # ---------- AI TRADE PLAN ----------
     sig, sl, tgt1, tgt2 = generate_ai_signal(df)
     clr = "#00d09c" if sig == "BUY" else "#ff4b4b"
 
@@ -135,7 +162,7 @@ else:
     st.error("No data found. Check symbol.")
 
 # -------------------------------------------------
-# AI PICKS
+# AI PICKS SCANNER
 st.markdown("---")
 st.header("⭐ Top 5 AI Picks")
 
@@ -146,12 +173,16 @@ if st.button("Run Scanner"):
             sig, _, _, _ = generate_ai_signal(df)
             curr = df['Close'].iloc[-1]
             clr = "#00d09c" if sig=="BUY" else "#ff4b4b"
-            st.markdown(f"<div style='padding:10px;border-left:5px solid {clr}'><b>{t}</b> → {sig} @ ₹{curr:.2f}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='padding:10px;border-left:5px solid {clr}'><b>{t}</b> → {sig} @ ₹{curr:.2f}</div>",
+                unsafe_allow_html=True
+            )
 
 # -------------------------------------------------
 # NEWS
 st.markdown("---")
 st.header("📰 Market News")
+
 try:
     feed = feedparser.parse("https://www.moneycontrol.com/rss/marketreports.xml")
     for e in feed.entries[:5]:

@@ -5,9 +5,7 @@ numpy
 plotly
 scikit-learn
 tensorflow-cpu
-joblib
-gdown
+requests
 feedparser
 textblob
-requests
 streamlit-autorefresh

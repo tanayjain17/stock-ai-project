@@ -9,5 +9,6 @@ joblib
 gdown
 feedparser
 textblob
-streamlit-autorefresh
 pytz
+streamlit-autorefresh
+streamlit-lottie

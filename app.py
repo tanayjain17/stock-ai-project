@@ -276,37 +276,54 @@ if view=="🏠 Market Dashboard":
         st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
 
 # --------------------------
-# 14. TOP 5 AI PICKS
+# --------------------------
+# 14. TOP 5 AI PICKS (NaN-safe)
 if view=="⭐ Top 5 AI Picks":
     st.title("⭐ Top 5 AI Picks for Tomorrow")
+    
     if LOTTIE_AVAILABLE:
-        lottie_url = "https://assets1.lottiefiles.com/packages/lf20_usmfx6bp.json"
-        r = requests.get(lottie_url)
-        st_lottie(r.json(), height=150)
+        try:
+            import requests
+            lottie_url = "https://assets1.lottiefiles.com/packages/lf20_usmfx6bp.json"
+            r = requests.get(lottie_url)
+            st_lottie(r.json(), height=150)
+        except:
+            st.info("Computing AI Picks, please wait...")
     else:
         st.info("Computing AI Picks, please wait...")
 
     ai_results=[]
     for name,symbol in NIFTY_100_TICKERS.items():
-        df_s = yf.download(symbol, period="3mo", interval="1d")
-        if df_s.empty: continue
-        df_s = add_indicators(df_s)
-        pred,_ = train_ai(df_s)
-        if pred:
-            curr,_ = get_live_data(symbol)
-            diff = pred - curr
-            ai_results.append((name,symbol,diff))
+        try:
+            df_s = yf.download(symbol, period="3mo", interval="1d")
+            if df_s.empty: continue
+            df_s = add_indicators(df_s)
+            pred,_ = train_ai(df_s)
+            if pred:
+                curr,_,_ = get_live_data(symbol)
+                if curr is None or curr==0: 
+                    continue
+                diff = pred - curr
+                ai_results.append((name,symbol,diff))
+        except Exception as e:
+            # Skip any ticker that fails
+            continue
+
     if ai_results:
         top5 = sorted(ai_results,key=lambda x:x[2],reverse=True)[:5]
         for name,symbol,diff in top5:
-            curr,_,_ = get_live_data(symbol)
-            sig = "BUY 🚀" if diff>0 else "SELL 🔻"
-            st.markdown(f"""
-            <div class="metric-card" style="border-top:3px solid #2962ff;">
-                <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
-                <div style="font-size:24px; font-weight:bold;">Current: {curr:.2f}</div>
-                <div style="color:#2962ff; font-weight:bold;">Potential: {diff:+.2f} • Signal: {sig}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            try:
+                curr,_,_ = get_live_data(symbol)
+                if curr is None or curr==0: continue
+                sig = "BUY 🚀" if diff>0 else "SELL 🔻"
+                st.markdown(f"""
+                <div class="metric-card" style="border-top:3px solid #2962ff;">
+                    <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
+                    <div style="font-size:24px; font-weight:bold;">Current: {curr:.2f}</div>
+                    <div style="color:#2962ff; font-weight:bold;">Potential: {diff:+.2f} • Signal: {sig}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            except:
+                continue
     else:
         st.warning("No AI picks available at the moment.")

@@ -295,6 +295,8 @@ if view=="🏠 Market Dashboard":
 
 # --------------------------
 # 14. TOP 5 AI PICKS
+# --------------------------
+# TOP 5 AI PICKS - FIXED
 if view=="⭐ Top 5 AI Picks":
     st.title("⭐ Top 5 AI Picks for Tomorrow")
     ai_results=[]
@@ -316,4 +318,10 @@ if view=="⭐ Top 5 AI Picks":
             st.markdown(f"""
             <div class="metric-card" style="border-top: 3px solid #2962ff;">
                 <div style="font-size:16px; font-weight:bold;">{name} ({symbol})</div>
-                <div style="font-size:26px; font-weight:bold
+                <div style="font-size:24px; font-weight:bold;">Current: {curr:.2f}</div>
+                <div style="color:#2962ff; font-weight:bold;">Potential: {diff:+.2f} • Signal: {sig}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.warning("No AI picks available at the moment.")
+

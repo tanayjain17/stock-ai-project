@@ -318,7 +318,7 @@ if view != "⭐ Top 5 AI Picks":
 # 11. TOP 5 AI PICKS (Optimized for Cloud)
 else:
     st.title("⭐ AI Market Scanners")
-    st.warning("Auto-refresh paused to allow AI computation.")
+    # Warning removed for cleaner UX
     
     if LOTTIE_AVAILABLE:
         try:

@@ -20,7 +20,7 @@ import streamlit.components.v1 as components
 # --------------------------
 # 1. PAGE CONFIGURATION
 st.set_page_config(
-    page_title="Groww-Style Pro Dashboard", 
+    page_title="Groww-Style Pro", 
     layout="wide", 
     page_icon="🚀",
     initial_sidebar_state="collapsed"
@@ -40,48 +40,51 @@ def navigate_to(page_name, ticker=None):
     st.rerun()
 
 # --------------------------
-# 3. MODERN CSS STYLING
+# 3. CSS STYLING (Restored & Fixed)
 st.markdown("""
 <style>
+    /* Global Settings */
     .stApp { background-color: #0f1115; font-family: 'Inter', sans-serif; }
     .block-container { padding-top: 1rem; }
     
-    /* CARDS */
+    /* GLASSMORPHISM CARDS */
     .fun-card {
         background: rgba(30, 34, 45, 0.6);
         backdrop-filter: blur(10px);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 20px;
+        border-radius: 16px;
         padding: 16px;
         transition: all 0.3s ease;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        cursor: pointer;
+        margin-bottom: 10px;
     }
-    .fun-card:hover { transform: translateY(-5px); border-color: #00d09c; }
-    
-    /* BUTTON STYLING FOR CARDS */
-    .stButton button {
-        width: 100%;
-        background-color: transparent;
-        border: none;
-        color: white;
-        text-align: left;
-        padding: 0;
-    }
-    .stButton button:hover {
-        border: none;
-        color: #00d09c;
-    }
+    .fun-card:hover { transform: translateY(-3px); border-color: #00d09c; }
 
-    /* GRADIENTS & TEXT */
-    .gradient-text-green { background: -webkit-linear-gradient(45deg, #00d09c, #00ffaa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; }
-    .gradient-text-red { background: -webkit-linear-gradient(45deg, #ff4b4b, #ff9068); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; }
-    .section-title { font-size: 22px; font-weight: 700; margin-top: 25px; margin-bottom: 15px; color: #e0e0e0; }
+    /* TEXT STYLES */
+    .card-title { font-size: 13px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .card-price { font-size: 24px; font-weight: 700; color: #fff; margin: 5px 0; }
+    .pos-change { color: #00d09c; font-weight: 600; font-size: 14px; }
+    .neg-change { color: #ff4b4b; font-weight: 600; font-size: 14px; }
     
     /* NEWS */
     .news-box { padding: 12px; border-radius: 12px; background: #161920; margin-bottom: 10px; border-left: 3px solid #4c8bf5; }
     .news-link { color: #fff; text-decoration: none; font-weight: 500; font-size: 14px; }
     .news-link:hover { color: #4c8bf5; }
+    
+    /* BUTTON OVERRIDES */
+    div.stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        background-color: #1E1E1E;
+        color: white;
+        border: 1px solid #333;
+        font-size: 12px;
+    }
+    div.stButton > button:hover {
+        border-color: #00d09c;
+        color: #00d09c;
+        background-color: #1E1E1E;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -185,32 +188,42 @@ def train_ai(df):
     model.compile(optimizer='adam', loss='mse')
     model.fit(X, y, epochs=2, batch_size=16, verbose=0)
     pred_scaled = model.predict(scaled[-60:].reshape(1, 60, 4), verbose=0)
-    pred_price = scaler.inverse_transform([[pred_scaled[0,0],0,0,0]])[0,0] # inverse dummy
+    pred_price = scaler.inverse_transform([[pred_scaled[0,0],0,0,0]])[0,0]
     return pred_price, df['ATR'].iloc[-1]
 
 # --------------------------
-# 8. SHARED CHART COMPONENT
+# 8. SHARED CHART COMPONENT (Used for Stock, ETF, Commodities)
 def render_chart_page(default_ticker, title):
+    # Header & Search
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("← Back"): navigate_to("🏠 Market Dashboard")
+    with col2:
+        st.subheader(f"{title}")
+
     col_ex, col_search = st.columns([1, 4])
     with col_ex:
-        exchange = st.selectbox("Exchange", ["NSE", "BSE", "Global"], index=0 if "NS" in default_ticker else 2)
+        exchange = st.selectbox("Market", ["NSE", "BSE", "Global"], index=0 if "NS" in default_ticker else 2)
     with col_search:
         clean_default = default_ticker.replace(".NS","").replace(".BO","")
         query = st.text_input("Search Ticker", clean_default)
 
     if exchange == "NSE": suffix = ".NS"
     elif exchange == "BSE": suffix = ".BO"
-    else: suffix = "" # Global has no suffix usually or =F
+    else: suffix = ""
     
-    # If user changed query, use that. Otherwise use passed default.
     if query != clean_default:
         ticker_symbol = f"{query.upper().strip()}{suffix}"
     else:
         ticker_symbol = default_ticker
 
+    # Fetch Data
     try:
         df_full = yf.download(ticker_symbol, period="2y", interval="1d", progress=False)
-        if isinstance(df_full.columns, pd.MultiIndex): df_full.columns = df_full.columns.get_level_values(0)
+        
+        # Flatten MultiIndex columns if present (Crucial Fix)
+        if isinstance(df_full.columns, pd.MultiIndex):
+            df_full.columns = df_full.columns.get_level_values(0)
 
         if df_full.empty:
             st.error(f"❌ No data found for {ticker_symbol}")
@@ -221,6 +234,7 @@ def render_chart_page(default_ticker, title):
             pct = (diff / df_full['Close'].iloc[-2]) * 100
             color = "#00e676" if diff >= 0 else "#ff1744"
 
+            # Live Header
             st.markdown(f"""
             <div style="display:flex; align-items:baseline; gap:15px; margin-bottom:15px;">
                 <h1 style="margin:0;">{query.upper()}</h1>
@@ -228,63 +242,117 @@ def render_chart_page(default_ticker, title):
                 <span style="color:{color}; font-weight:bold; font-size:18px;">{diff:+.2f} ({pct:+.2f}%)</span>
             </div>""", unsafe_allow_html=True)
 
+            # Timeframe
             tf_map = {"1M":30,"6M":180,"1Y":365,"MAX":5000}
             sel_tf = st.radio("Range", list(tf_map.keys()), horizontal=True, label_visibility="collapsed")
             df_chart = df_full.tail(tf_map[sel_tf])
 
-            tab1, tab2 = st.tabs(["📊 Technicals", "🧠 Fundamentals"])
+            # Tabs
+            tab1, tab2 = st.tabs(["📊 Technicals & AI", "🧠 Fundamentals & News"])
+            
             with tab1:
+                # Chart
                 fig = go.Figure(data=[go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'])])
+                fig.add_trace(go.Scatter(x=df_chart.index, y=df_chart['SMA_50'], line=dict(color='orange', width=1), name="SMA 50"))
                 fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=500, xaxis_rangeslider_visible=False)
                 st.plotly_chart(fig, use_container_width=True)
                 
-                st.caption("⚡ AI Prediction running...")
+                # AI Prediction
+                st.caption("⚡ Analyzing patterns...")
                 pred, atr = train_ai(df_full)
                 if pred:
                     signal = "BUY 🚀" if pred > curr else "SELL 🔻"
-                    st.success(f"AI Target: {pred:.2f} | Signal: {signal}")
+                    col_ai1, col_ai2 = st.columns(2)
+                    with col_ai1:
+                         st.info(f"AI Target Price: ₹{pred:.2f}")
+                    with col_ai2:
+                         st.success(f"Signal: {signal}")
 
             with tab2:
+                # Fundamentals
                 try:
                     info = yf.Ticker(ticker_symbol).info
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Market Cap", f"{info.get('marketCap',0)/10000000:.2f} Cr")
                     c2.metric("P/E Ratio", info.get('trailingPE', 'N/A'))
                     c3.metric("Sector", info.get('sector', 'N/A'))
-                except: st.info("No fundamental data.")
+                except: st.info("Fundamental data unavailable.")
                 
-                # StockTwits
+                # StockTwits Widget (Improved)
                 clean_sym = query.upper().replace(".NS","")
-                components.html(f"""<script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script><div id="stocktwits-widget-news"></div><script type="text/javascript">STWT.Widget({{container: 'stocktwits-widget-news', symbol: '{clean_sym}', width: '100%', height: '300', limit: '15', scrollbars: 'true', streaming: 'true', title: '{clean_sym} Stream', style: {{link_color: '48515c', link_hover_color: '48515c', header_text_color: 'ffffff', border_color: '333333', divider_color: '333333', box_color: '161920', stream_color: '161920', text_color: 'ffffff', time_color: '999999'}} }});</script>""", height=320, scrolling=True)
+                components.html(f"""
+                <script type="text/javascript" src="https://api.stocktwits.com/addon/widget/2/widget-loader.min.js"></script>
+                <div id="stocktwits-widget-news"></div>
+                <script type="text/javascript">
+                STWT.Widget({{
+                    container: 'stocktwits-widget-news',
+                    symbol: '{clean_sym}',
+                    width: '100%',
+                    height: '400',
+                    limit: '15',
+                    scrollbars: 'true',
+                    streaming: 'true',
+                    title: '{clean_sym} Live',
+                    style: {{
+                        link_color: '48515c',
+                        link_hover_color: '48515c',
+                        header_text_color: 'ffffff',
+                        border_color: '333333',
+                        divider_color: '333333',
+                        box_color: '161920',
+                        stream_color: '161920',
+                        text_color: 'ffffff',
+                        time_color: '999999'
+                    }}
+                }});
+                </script>
+                """, height=420, scrolling=True)
 
     except Exception as e: st.error(str(e))
 
 # --------------------------
-# 9. DASHBOARD VIEW
+# 9. DASHBOARD VIEW (Fixed Layout)
 if view == "🏠 Market Dashboard":
-    st.markdown('<div class="section-title">📊 Market Indices (Click to Analyze)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📊 Market Indices</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
+    
     for (name, ticker), col in zip(INDICES.items(), [c1, c2, c3]):
         p, ch, pct = get_live_data(ticker)
-        color = "#00d09c" if ch >= 0 else "#ff4b4b"
+        color_cls = "pos-change" if ch >= 0 else "neg-change"
+        sign = "+" if ch >= 0 else ""
         with col:
-            # Clickable Card Logic
-            if st.button(f"{name}\n₹{p:,.2f}  {ch:+.2f} ({pct:+.2f}%)", key=name):
+            # 1. Visual Card (HTML)
+            st.markdown(f"""
+            <div class="fun-card">
+                <div class="card-title">{name}</div>
+                <div class="card-price">₹{p:,.2f}</div>
+                <div class="{color_cls}">{sign}{ch:.2f} ({sign}{pct:.2f}%)</div>
+            </div>
+            """, unsafe_allow_html=True)
+            # 2. Action Button (Separate to ensure functionality)
+            if st.button(f"Analyze {name} ➜", key=f"btn_{name}"):
                 navigate_to("📈 Stock Analyzer", ticker)
-            
-            # Visual card (rendered below button invisibly or just use button text)
-            # Streamlit buttons don't support HTML styling inside well, so we use the button text for info.
 
-    st.markdown('<div class="section-title">🔥 Most Traded (Click to Analyze)</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🔥 Most Traded (Live)</div>', unsafe_allow_html=True)
     top_vol_df = scan_most_traded()
+    
     if not top_vol_df.empty:
         cols = st.columns(4)
         for i, (index, row) in enumerate(top_vol_df.iterrows()):
             sym = row['symbol'].replace(".NS","")
             pct = row['pct']
+            color_cls = "pos-change" if pct >= 0 else "neg-change"
+            sign = "+" if pct >= 0 else ""
+            
             with cols[i]:
-                label = f"{sym}\n₹{row['price']:.2f}\n{pct:+.2f}%"
-                if st.button(label, key=f"btn_{sym}"):
+                st.markdown(f"""
+                <div class="fun-card">
+                    <div style="font-weight:700; font-size:16px;">{sym}</div>
+                    <div style="font-size:18px; font-weight:bold; margin-top:5px;">₹{row['price']:.2f}</div>
+                    <div class="{color_cls}">{sign}{pct:.2f}%</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button(f"Analyze {sym} ➜", key=f"btn_{sym}"):
                     navigate_to("📈 Stock Analyzer", row['symbol'])
 
     st.markdown("---")
@@ -299,76 +367,113 @@ elif view == "📈 Stock Analyzer":
     render_chart_page(st.session_state.selected_ticker, "Stock Analysis")
 
 # --------------------------
-# 11. ETF PAGE
+# 11. ETF PAGE (Now Functional)
 elif view == "🏦 ETFs & Mutual Funds":
     st.markdown('<div class="section-title">🏦 Top ETFs</div>', unsafe_allow_html=True)
-    sel_etf = st.selectbox("Choose ETF", list(ETF_LIST.keys()))
-    render_chart_page(ETF_LIST[sel_etf], "ETF Analysis")
+    
+    # Selection Grid
+    cols = st.columns(6)
+    for i, (name, ticker) in enumerate(ETF_LIST.items()):
+        with cols[i]:
+            if st.button(name):
+                st.session_state.selected_ticker = ticker
+    
+    render_chart_page(st.session_state.selected_ticker, "ETF Analysis")
 
 # --------------------------
-# 12. COMMODITIES PAGE
+# 12. COMMODITIES PAGE (Now Functional)
 elif view == "🛢️ Global Commodities":
     st.markdown('<div class="section-title">🛢️ Global Commodities</div>', unsafe_allow_html=True)
-    sel_comm = st.selectbox("Choose Asset", list(COMMODITY_LIST.keys()))
-    render_chart_page(COMMODITY_LIST[sel_comm], "Commodity Analysis")
+    
+    cols = st.columns(5)
+    for i, (name, ticker) in enumerate(COMMODITY_LIST.items()):
+        with cols[i]:
+            if st.button(name):
+                st.session_state.selected_ticker = ticker
+                
+    render_chart_page(st.session_state.selected_ticker, "Commodity Analysis")
 
 # --------------------------
-# 13. F/O DASHBOARD (NEW)
+# 13. F/O DASHBOARD (New Feature)
 elif view == "📊 F/O & Options Chain":
-    st.markdown('<div class="section-title">📊 Options Chain & Derivatives</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📊 F/O Dashboard</div>', unsafe_allow_html=True)
     
-    fo_ticker = st.text_input("F/O Symbol (e.g. NIFTY, RELIANCE)", "NIFTY")
+    fo_ticker = st.text_input("Enter Symbol (e.g. NIFTY, BANKNIFTY, RELIANCE)", "NIFTY")
     
-    # Handle Indices vs Stocks for yfinance
     if fo_ticker.upper() == "NIFTY": yf_sym = "^NSEI"
     elif fo_ticker.upper() == "BANKNIFTY": yf_sym = "^NSEBANK"
     else: yf_sym = f"{fo_ticker.upper()}.NS"
 
     try:
         tk = yf.Ticker(yf_sym)
+        spot = tk.fast_info.last_price
+        st.metric("Spot Price", f"₹{spot:,.2f}")
+        
+        # Options Data
         expiries = tk.options
-        if not expiries:
-            st.warning(f"No options data found for {fo_ticker}. Note: yfinance often delays NSE option data.")
+        if expiries:
+            sel_exp = st.selectbox("Expiry Date", expiries)
+            chain = tk.option_chain(sel_exp)
+            calls = chain.calls
+            puts = chain.puts
+            
+            # PCR
+            pcr = puts['openInterest'].sum() / calls['openInterest'].sum()
+            st.info(f"Put-Call Ratio (PCR): {pcr:.2f}")
+
+            # ATM Filter
+            strike_min = spot * 0.98
+            strike_max = spot * 1.02
+            
+            c_atm = calls[(calls['strike']>=strike_min) & (calls['strike']<=strike_max)][['strike','lastPrice','openInterest']]
+            p_atm = puts[(puts['strike']>=strike_min) & (puts['strike']<=strike_max)][['strike','lastPrice','openInterest']]
+            
+            c_atm.rename(columns={'lastPrice':'CE Price', 'openInterest':'CE OI'}, inplace=True)
+            p_atm.rename(columns={'lastPrice':'PE Price', 'openInterest':'PE OI'}, inplace=True)
+            
+            df_chain = pd.merge(c_atm, p_atm, on='strike')
+            st.dataframe(df_chain.set_index('strike'), use_container_width=True)
         else:
-            sel_exp = st.selectbox("Select Expiry", expiries)
-            
-            # Fetch Chain
-            opt = tk.option_chain(sel_exp)
-            calls = opt.calls
-            puts = opt.puts
-            
-            # Underlying Price (approx)
-            spot = tk.fast_info.last_price
-            st.metric("Spot Price", f"{spot:,.2f}")
-
-            # PCR Calculation
-            total_ce_oi = calls['openInterest'].sum()
-            total_pe_oi = puts['openInterest'].sum()
-            pcr = total_pe_oi / total_ce_oi if total_ce_oi > 0 else 0
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Put-Call Ratio (PCR)", f"{pcr:.2f}")
-            c2.caption("PCR > 1.0 generally Bullish, < 0.7 Bearish")
-
-            # Display Table
-            st.subheader("Option Chain (Near ATM)")
-            
-            # Filter near ATM
-            atm_calls = calls[(calls['strike'] > spot*0.95) & (calls['strike'] < spot*1.05)]
-            atm_puts = puts[(puts['strike'] > spot*0.95) & (puts['strike'] < spot*1.05)]
-            
-            # Clean view
-            df_chain = pd.merge(atm_calls[['strike','lastPrice','openInterest','volume']], 
-                                atm_puts[['strike','lastPrice','openInterest','volume']], 
-                                on='strike', suffixes=('_CE', '_PE'))
-            
-            st.dataframe(df_chain.set_index('strike').sort_index(), use_container_width=True)
+            st.warning("Options data not available for this symbol.")
             
     except Exception as e:
-        st.error(f"Error fetching F/O data: {e}")
+        st.error(f"Error loading F/O data: {e}")
 
 # --------------------------
 # 14. AI PICKS
 elif view == "⭐ Top 5 AI Picks":
-    st.info("AI Scanner running on simplified pool...")
-    # (Reuse existing scanner logic from previous steps here)
+    st.markdown('<div class="section-title">⭐ AI Market Scanners</div>', unsafe_allow_html=True)
+    st.info("Running AI scan on market leaders...")
+    
+    # Simplified Logic for Demo Speed
+    results = []
+    progress = st.progress(0)
+    for i, ticker in enumerate(SCANNER_POOL[:8]): # Limit to 8 for speed
+        progress.progress((i+1)/8)
+        try:
+            df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            df = add_indicators(df)
+            pred, _ = train_ai(df)
+            if pred:
+                curr = df['Close'].iloc[-1]
+                diff = pred - curr
+                results.append((ticker, diff, curr))
+        except: continue
+    
+    progress.empty()
+    
+    if results:
+        results.sort(key=lambda x: x[1], reverse=True)
+        for sym, diff, curr in results:
+            action = "BUY 🚀" if diff > 0 else "SELL 🔻"
+            color = "#00d09c" if diff > 0 else "#ff4b4b"
+            st.markdown(f"""
+            <div class="fun-card" style="border-left: 5px solid {color}">
+                <h3>{sym.replace('.NS','')}</h3>
+                <p>Current: ₹{curr:.2f}</p>
+                <p style="color:{color}; font-weight:bold;">Potential: {diff:+.2f} ({action})</p>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.warning("No clear signals found right now.")

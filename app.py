@@ -53,8 +53,34 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Optional Lottie loader
+try:
+    from streamlit_lottie import st_lottie
+    LOTTIE_AVAILABLE = True
+except ImportError:
+    LOTTIE_AVAILABLE = False
+
 # --------------------------
-# 4. UTILITIES
+# 5. DATABASES
+INDICES = {"NIFTY 50": "^NSEI","SENSEX": "^BSESN","BANK NIFTY": "^NSEBANK"}
+
+NIFTY_100_TICKERS = {
+    "Reliance":"RELIANCE.NS","TCS":"TCS.NS","HDFC Bank":"HDFCBANK.NS","ICICI Bank":"ICICIBANK.NS",
+    "Infosys":"INFY.NS","SBI":"SBIN.NS","Bharti Airtel":"BHARTIARTL.NS","ITC":"ITC.NS",
+    "L&T":"LT.NS","Kotak Bank":"KOTAKBANK.NS","Axis Bank":"AXISBANK.NS","Tata Motors":"TATAMOTORS.NS",
+    "Maruti Suzuki":"MARUTI.NS","Bajaj Finance":"BAJFINANCE.NS","Sun Pharma":"SUNPHARMA.NS",
+    "Titan":"TITAN.NS","NTPC":"NTPC.NS","Power Grid":"POWERGRID.NS","ONGC":"ONGC.NS",
+    "Zomato":"ZOMATO.NS","Adani Ent":"ADANIENT.NS","DLF":"DLF.NS","HAL":"HAL.NS",
+    "Tata Steel":"TATASTEEL.NS","Hindalco":"HINDALCO.NS","Jio Financial":"JIOFIN.NS"
+}
+
+ETFS_MFS = {
+    "Nifty 50 ETF":"NIFTYBEES.NS","Bank Nifty ETF":"BANKBEES.NS","IT Tech ETF":"ITBEES.NS",
+    "Pharma ETF":"PHARMABEES.NS","Gold ETF":"GOLDBEES.NS","Silver ETF":"SILVERBEES.NS",
+    "US Nasdaq 100":"MON100.NS","CPSE ETF":"CPSEETF.NS"
+}
+
+COMMODITIES_GLOBAL = {"Gold":"GC=F","Silver":"SI=F","Crude Oil":"CL=F","Natural Gas":"NG=F","Copper":"HG=F"}
 
 # Define the sources you want to track
 RSS_FEEDS = {
@@ -67,6 +93,8 @@ RSS_FEEDS = {
     "Business Standard": "https://www.business-standard.com/rss/finance-103.rss"
 }
 
+# --------------------------
+# 6. UTILITIES
 def is_market_open(ticker):
     utc_now = datetime.now(pytz.utc)
     ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
@@ -129,75 +157,6 @@ def get_news(query="Stock Market", count=10):
     sorted_news = sorted(items, key=lambda x: x['ts'], reverse=True)
     
     return sorted_news[:count]
-
-# Optional Lottie loader
-try:
-    from streamlit_lottie import st_lottie
-    LOTTIE_AVAILABLE = True
-except ImportError:
-    LOTTIE_AVAILABLE = False
-
-# --------------------------
-# 5. DATABASES
-INDICES = {"NIFTY 50": "^NSEI","SENSEX": "^BSESN","BANK NIFTY": "^NSEBANK"}
-
-NIFTY_100_TICKERS = {
-    "Reliance":"RELIANCE.NS","TCS":"TCS.NS","HDFC Bank":"HDFCBANK.NS","ICICI Bank":"ICICIBANK.NS",
-    "Infosys":"INFY.NS","SBI":"SBIN.NS","Bharti Airtel":"BHARTIARTL.NS","ITC":"ITC.NS",
-    "L&T":"LT.NS","Kotak Bank":"KOTAKBANK.NS","Axis Bank":"AXISBANK.NS","Tata Motors":"TATAMOTORS.NS",
-    "Maruti Suzuki":"MARUTI.NS","Bajaj Finance":"BAJFINANCE.NS","Sun Pharma":"SUNPHARMA.NS",
-    "Titan":"TITAN.NS","NTPC":"NTPC.NS","Power Grid":"POWERGRID.NS","ONGC":"ONGC.NS",
-    "Zomato":"ZOMATO.NS","Adani Ent":"ADANIENT.NS","DLF":"DLF.NS","HAL":"HAL.NS",
-    "Tata Steel":"TATASTEEL.NS","Hindalco":"HINDALCO.NS","Jio Financial":"JIOFIN.NS"
-}
-
-ETFS_MFS = {
-    "Nifty 50 ETF":"NIFTYBEES.NS","Bank Nifty ETF":"BANKBEES.NS","IT Tech ETF":"ITBEES.NS",
-    "Pharma ETF":"PHARMABEES.NS","Gold ETF":"GOLDBEES.NS","Silver ETF":"SILVERBEES.NS",
-    "US Nasdaq 100":"MON100.NS","CPSE ETF":"CPSEETF.NS"
-}
-
-COMMODITIES_GLOBAL = {"Gold":"GC=F","Silver":"SI=F","Crude Oil":"CL=F","Natural Gas":"NG=F","Copper":"HG=F"}
-
-# --------------------------
-# 6. UTILITIES
-def is_market_open(ticker):
-    utc_now = datetime.now(pytz.utc)
-    ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
-    if ist_now.weekday() >= 5: return False, "Weekend"
-    if dt_time(9, 15) <= ist_now.time() <= dt_time(15, 30): return True, "Open"
-    return False, "Closed"
-
-def get_currency(ticker):
-    return "₹" if ticker.endswith(".NS") else "$"
-
-def get_live_data(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        price = stock.fast_info.last_price
-        prev = stock.fast_info.previous_close
-        if price is None or prev is None: return 0.0, 0.0, 0.0
-        return price, price - prev, (price - prev) / prev * 100
-    except:
-        return 0.0, 0.0, 0.0
-
-def get_news(query, count=5):
-    try:
-        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-IN&gl=IN&ceid=IN:en"
-        feed = feedparser.parse(url)
-        items = []
-        for e in feed.entries[:count]:
-            blob = TextBlob(e.title)
-            sent = "🟢 Bullish" if blob.sentiment.polarity > 0.05 else "🔴 Bearish" if blob.sentiment.polarity < -0.05 else "⚪ Neutral"
-            ts = time.mktime(e.published_parsed) if 'published_parsed' in e else 0
-            items.append({
-                'title': e.title, 'link': e.link,
-                'source': e.get('source', {}).get('title', 'News'),
-                'date': e.get('published', '')[:16], 'ts': ts, 'sent': sent
-            })
-        return sorted(items, key=lambda x: x['ts'], reverse=True)
-    except:
-        return []
 
 def add_indicators(df):
     if df.empty: return df
@@ -346,6 +305,7 @@ if view != "⭐ Top 5 AI Picks":
 
         st.markdown("---")
         st.subheader("📰 Top Market Headlines")
+        # Fetch news using the updated multi-source function
         news = get_news("Indian Stock Market")
         for n in news:
             st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
@@ -395,7 +355,7 @@ if view != "⭐ Top 5 AI Picks":
 # 11. TOP 5 AI PICKS (Optimized for Cloud)
 else:
     st.title("⭐ AI Market Scanners")
-    # Warning removed for cleaner UX
+    # No warning text here, as requested!
     
     if LOTTIE_AVAILABLE:
         try:

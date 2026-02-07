@@ -1,1008 +1,1257 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from datetime import datetime, timedelta
 import warnings
 warnings.filterwarnings('ignore')
 
 # Machine Learning
-from sklearn.preprocessing import RobustScaler, StandardScaler
-from sklearn.model_selection import TimeSeriesSplit, RandomizedSearchCV
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score, accuracy_score, classification_report
-import xgboost as xgb
-from xgboost import XGBRegressor, XGBClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from xgboost import XGBClassifier
 import lightgbm as lgb
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
-from sklearn.svm import SVR
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 
-# Deep Learning
-import tensorflow as tf
-from tensorflow.keras.models import Sequential, Model
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, Input, BatchNormalization, Attention
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.optimizers import Adam
+# Natural Language Processing
+import requests
+from bs4 import BeautifulSoup
+import feedparser
+import re
+from textblob import TextBlob
+import nltk
+from nltk.sentiment.vader import SentimentIntensityAnalyzer
+try:
+    nltk.download('vader_lexicon')
+except:
+    pass
 
 # Technical Analysis
 import ta
 from ta import add_all_ta_features
 from ta.momentum import RSIIndicator, StochasticOscillator
-from ta.trend import MACD, EMAIndicator, ADXIndicator
+from ta.trend import MACD, EMAIndicator, IchimokuIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 from ta.volume import VolumeWeightedAveragePrice, OnBalanceVolumeIndicator
 
-# Backtesting
-from backtesting import Backtest, Strategy
-from backtesting.lib import crossover
-import quantstats as qs
-
-# Utilities
-import joblib
-import optuna
-from datetime import datetime, timedelta
+# Database
+import sqlite3
+import pickle
 import json
-import pytz
-import requests
-from io import StringIO
+import hashlib
 
 # ============================================================================
-# PAGE CONFIG
+# PAGE CONFIG & STYLING
 # ============================================================================
 st.set_page_config(
-    page_title="Quantitative Trading AI",
+    page_title="Indian Market Predictor AI",
     layout="wide",
-    page_icon="📊",
+    page_icon="📈",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for Indian Market Theme
 st.markdown("""
 <style>
+    /* Main theme colors */
     .main-header {
-        font-size: 2.5rem;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(90deg, #FF9933 0%, #FFFFFF 50%, #138808 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        padding: 10px 0;
+        font-size: 2.8rem;
+        font-weight: bold;
+        text-align: center;
+        padding: 20px 0;
+        margin-bottom: 30px;
     }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 20px;
-        border-radius: 15px;
-        color: white;
+    
+    .indian-flag {
+        height: 5px;
+        background: linear-gradient(to right, #FF9933 33%, #FFFFFF 33% 66%, #138808 66%);
         margin: 10px 0;
+        border-radius: 3px;
     }
-    .prediction-buy {
-        background: linear-gradient(135deg, #00b09b 0%, #96c93d 100%);
+    
+    /* Card styling */
+    .prediction-card {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        padding: 25px;
+        border-radius: 15px;
+        border: 1px solid #0f3460;
+        margin: 15px 0;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    
+    .buy-signal {
+        background: linear-gradient(135deg, #1a3c1a 0%, #2d5a2d 100%);
+        border-left: 6px solid #4CAF50;
+        animation: pulse-green 2s infinite;
+    }
+    
+    .sell-signal {
+        background: linear-gradient(135deg, #3c1a1a 0%, #5a2d2d 100%);
+        border-left: 6px solid #FF5252;
+        animation: pulse-red 2s infinite;
+    }
+    
+    .hold-signal {
+        background: linear-gradient(135deg, #2d2d3c 0%, #3d3d5a 100%);
+        border-left: 6px solid #FFC107;
+    }
+    
+    @keyframes pulse-green {
+        0% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+    }
+    
+    @keyframes pulse-red {
+        0% { box-shadow: 0 0 0 0 rgba(255, 82, 82, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(255, 82, 82, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(255, 82, 82, 0); }
+    }
+    
+    /* Metric cards */
+    .metric-card {
+        background: rgba(30, 30, 46, 0.8);
+        padding: 20px;
+        border-radius: 10px;
+        border: 1px solid #0f3460;
+        text-align: center;
+        backdrop-filter: blur(10px);
+    }
+    
+    /* News cards */
+    .news-card {
+        background: rgba(26, 26, 46, 0.9);
         padding: 15px;
         border-radius: 10px;
-        color: white;
+        margin: 10px 0;
+        border-left: 4px solid #2962ff;
+        transition: all 0.3s ease;
     }
-    .prediction-sell {
-        background: linear-gradient(135deg, #ff416c 0%, #ff4b2b 100%);
-        padding: 15px;
-        border-radius: 10px;
-        color: white;
+    
+    .news-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.3);
     }
+    
+    /* Progress bars */
+    .stProgress > div > div > div > div {
+        background: linear-gradient(90deg, #FF9933 0%, #138808 100%);
+    }
+    
+    /* Custom tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 2px;
     }
+    
     .stTabs [data-baseweb="tab"] {
-        height: 50px;
-        white-space: pre-wrap;
         background-color: #0e1117;
-        border-radius: 4px 4px 0px 0px;
-        gap: 1px;
-        padding-top: 10px;
-        padding-bottom: 10px;
+        border-radius: 4px 4px 0 0;
+        padding: 10px 20px;
+        font-weight: bold;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #1e2330;
+        border-bottom: 3px solid #FF9933;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # ============================================================================
-# DATA PIPELINE
+# INDIAN MARKET DATABASE
 # ============================================================================
-class DataPipeline:
-    def __init__(self, symbol, start_date=None, end_date=None):
-        self.symbol = symbol
-        self.end_date = end_date or datetime.now()
-        self.start_date = start_date or (self.end_date - timedelta(days=365*2))
-        
-    def fetch_data(self, interval='1d'):
-        """Fetch and clean market data"""
-        try:
-            ticker = yf.Ticker(self.symbol)
-            df = ticker.history(
-                start=self.start_date,
-                end=self.end_date,
-                interval=interval,
-                auto_adjust=True
-            )
-            
-            if df.empty:
-                raise ValueError(f"No data for {self.symbol}")
-            
-            # Basic cleaning
-            df = df[~df.index.duplicated(keep='first')]
-            df = df.asfreq('D', method='pad') if interval == '1d' else df
-            
-            # Remove outliers using IQR
-            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                if col in df.columns:
-                    Q1 = df[col].quantile(0.25)
-                    Q3 = df[col].quantile(0.75)
-                    IQR = Q3 - Q1
-                    lower_bound = Q1 - 1.5 * IQR
-                    upper_bound = Q3 + 1.5 * IQR
-                    df[col] = df[col].clip(lower_bound, upper_bound)
-            
-            return df
-        except Exception as e:
-            st.error(f"Error fetching data: {str(e)}")
-            return pd.DataFrame()
+
+class IndianMarketDatabase:
+    """Database of Indian stocks, indices, and commodities"""
     
-    def calculate_features(self, df):
-        """Calculate comprehensive technical indicators"""
+    # Nifty 50 Stocks
+    NIFTY_50 = {
+        "RELIANCE": "RELIANCE.NS",
+        "TCS": "TCS.NS",
+        "HDFC BANK": "HDFCBANK.NS",
+        "ICICI BANK": "ICICIBANK.NS",
+        "INFOSYS": "INFY.NS",
+        "HINDUNILVR": "HINDUNILVR.NS",
+        "ITC": "ITC.NS",
+        "SBIN": "SBIN.NS",
+        "BHARTI AIRTEL": "BHARTIARTL.NS",
+        "KOTAK BANK": "KOTAKBANK.NS",
+        "LT": "LT.NS",
+        "AXIS BANK": "AXISBANK.NS",
+        "MARUTI": "MARUTI.NS",
+        "BAJFINANCE": "BAJFINANCE.NS",
+        "ASIAN PAINT": "ASIANPAINT.NS",
+        "HCL TECH": "HCLTECH.NS",
+        "WIPRO": "WIPRO.NS",
+        "SUN PHARMA": "SUNPHARMA.NS",
+        "TITAN": "TITAN.NS",
+        "DMART": "DMART.NS",
+        "ULTRACEMCO": "ULTRACEMCO.NS",
+        "NESTLE": "NESTLEIND.NS",
+        "ONGC": "ONGC.NS",
+        "POWERGRID": "POWERGRID.NS",
+        "NTPC": "NTPC.NS",
+        "JSW STEEL": "JSWSTEEL.NS",
+        "TATA STEEL": "TATASTEEL.NS",
+        "TECH MAHINDRA": "TECHM.NS",
+        "BAJAJ FINSERV": "BAJAJFINSV.NS",
+        "GRASIM": "GRASIM.NS"
+    }
+    
+    # Major Indices
+    INDICES = {
+        "NIFTY 50": "^NSEI",
+        "SENSEX": "^BSESN",
+        "BANK NIFTY": "^NSEBANK",
+        "NIFTY IT": "^CNXIT",
+        "NIFTY AUTO": "^CNXAUTO",
+        "NIFTY PHARMA": "^CNXPHARMA",
+        "NIFTY FMCG": "^CNXFMCG",
+        "NIFTY METAL": "^CNXMETAL",
+        "NIFTY REALTY": "^CNXREALTY"
+    }
+    
+    # Indian Commodities (MCX)
+    COMMODITIES = {
+        "GOLD": "GOLD.NS",
+        "SILVER": "SILVER.NS",
+        "CRUDEOIL": "CRUDEOIL.NS",
+        "NATURALGAS": "NATURALGAS.NS",
+        "COPPER": "COPPER.NS",
+        "ZINC": "ZINC.NS",
+        "LEAD": "LEAD.NS",
+        "ALUMINIUM": "ALUMINIUM.NS",
+        "COTTON": "COTTON.NS"
+    }
+    
+    # Sector-wise Classification
+    SECTORS = {
+        "BANKING": ["HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS"],
+        "IT": ["TCS.NS", "INFY.NS", "HCLTECH.NS", "WIPRO.NS", "TECHM.NS"],
+        "AUTOMOBILE": ["MARUTI.NS", "TATAMOTORS.NS", "M&M.NS", "BAJAJAUTO.NS", "EICHERMOT.NS"],
+        "PHARMA": ["SUNPHARMA.NS", "DRREDDY.NS", "CIPLA.NS", "DIVISLAB.NS", "BIOCON.NS"],
+        "FMCG": ["HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS", "DABUR.NS"],
+        "ENERGY": ["RELIANCE.NS", "ONGC.NS", "IOC.NS", "BPCL.NS", "GAIL.NS"],
+        "METALS": ["TATASTEEL.NS", "JSWSTEEL.NS", "HINDALCO.NS", "VEDL.NS", "JINDALSTEL.NS"]
+    }
+
+# ============================================================================
+# NEWS COLLECTOR & SENTIMENT ANALYZER
+# ============================================================================
+
+class IndianMarketNews:
+    """Collect and analyze news for Indian markets"""
+    
+    def __init__(self):
+        self.sources = {
+            'moneycontrol': 'https://www.moneycontrol.com/rss/marketreports.xml',
+            'economic_times': 'https://economictimes.indiatimes.com/markets/rssfeeds/1977021501.cms',
+            'business_standard': 'https://www.business-standard.com/rss/markets-106.rss',
+            'livemint': 'https://www.livemint.com/rss/markets',
+            'ndtv_profit': 'https://www.ndtvprofit.com/feeds/market-news'
+        }
+        self.sia = SentimentIntensityAnalyzer()
+        
+    def fetch_news(self, query="", source='all'):
+        """Fetch news from various sources"""
+        all_news = []
+        
+        try:
+            # MoneyControl - Indian Market Specific
+            if source == 'all' or source == 'moneycontrol':
+                feed = feedparser.parse(self.sources['moneycontrol'])
+                for entry in feed.entries[:10]:
+                    news_item = {
+                        'title': entry.title,
+                        'link': entry.link,
+                        'source': 'MoneyControl',
+                        'published': entry.published,
+                        'summary': entry.get('summary', ''),
+                        'symbols': self.extract_symbols(entry.title + " " + entry.get('summary', ''))
+                    }
+                    all_news.append(news_item)
+            
+            # Economic Times
+            if source == 'all' or source == 'economic_times':
+                feed = feedparser.parse(self.sources['economic_times'])
+                for entry in feed.entries[:10]:
+                    news_item = {
+                        'title': entry.title,
+                        'link': entry.link,
+                        'source': 'Economic Times',
+                        'published': entry.published,
+                        'summary': entry.get('summary', ''),
+                        'symbols': self.extract_symbols(entry.title + " " + entry.get('summary', ''))
+                    }
+                    all_news.append(news_item)
+            
+            # Business Standard
+            if source == 'all' or source == 'business_standard':
+                feed = feedparser.parse(self.sources['business_standard'])
+                for entry in feed.entries[:10]:
+                    news_item = {
+                        'title': entry.title,
+                        'link': entry.link,
+                        'source': 'Business Standard',
+                        'published': entry.published,
+                        'summary': entry.get('summary', ''),
+                        'symbols': self.extract_symbols(entry.title + " " + entry.get('summary', ''))
+                    }
+                    all_news.append(news_item)
+        
+        except Exception as e:
+            st.warning(f"News fetch error: {str(e)}")
+        
+        # Filter by query if provided
+        if query:
+            filtered_news = []
+            query_lower = query.lower()
+            for news in all_news:
+                if (query_lower in news['title'].lower() or 
+                    query_lower in news['summary'].lower() or
+                    query in news['symbols']):
+                    filtered_news.append(news)
+            all_news = filtered_news
+        
+        # Sort by date and remove duplicates
+        all_news.sort(key=lambda x: x['published'], reverse=True)
+        
+        # Analyze sentiment for each news
+        for news in all_news:
+            text = news['title'] + " " + news['summary']
+            sentiment = self.analyze_sentiment(text)
+            news['sentiment'] = sentiment['compound']
+            news['sentiment_label'] = self.get_sentiment_label(sentiment['compound'])
+        
+        return all_news[:15]  # Return top 15 news items
+    
+    def extract_symbols(self, text):
+        """Extract stock symbols from text"""
+        symbols = []
+        # Look for common Indian stock patterns
+        patterns = [
+            r'\b(RELIANCE|TCS|HDFC|ICICI|INFY|SBIN|BHARTI|KOTAK|AXIS)\b',
+            r'\b(MARUTI|BAJAJ|TITAN|SUN PHARMA|ITC)\b',
+            r'\b(NIFTY|SENSEX|BANK NIFTY)\b'
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            symbols.extend(matches)
+        
+        return list(set(symbols))
+    
+    def analyze_sentiment(self, text):
+        """Analyze sentiment of text"""
+        return self.sia.polarity_scores(text)
+    
+    def get_sentiment_label(self, score):
+        """Convert sentiment score to label"""
+        if score >= 0.05:
+            return "🟢 Bullish"
+        elif score <= -0.05:
+            return "🔴 Bearish"
+        else:
+            return "⚪ Neutral"
+    
+    def get_market_sentiment(self):
+        """Get overall market sentiment"""
+        all_news = self.fetch_news()
+        if not all_news:
+            return 0, "Neutral"
+        
+        avg_sentiment = np.mean([news['sentiment'] for news in all_news])
+        
+        if avg_sentiment >= 0.1:
+            return avg_sentiment, "Strongly Bullish 🚀"
+        elif avg_sentiment >= 0.05:
+            return avg_sentiment, "Bullish 📈"
+        elif avg_sentiment <= -0.1:
+            return avg_sentiment, "Strongly Bearish 🐻"
+        elif avg_sentiment <= -0.05:
+            return avg_sentiment, "Bearish 📉"
+        else:
+            return avg_sentiment, "Neutral ⚖️"
+
+# ============================================================================
+# TECHNICAL ANALYSIS ENGINE
+# ============================================================================
+
+class TechnicalAnalyzer:
+    """Generate comprehensive technical indicators for Indian stocks"""
+    
+    def __init__(self):
+        self.indicators_config = {
+            'trend': ['sma', 'ema', 'macd', 'adx', 'ichimoku'],
+            'momentum': ['rsi', 'stochastic', 'williams_r', 'cci'],
+            'volatility': ['bollinger', 'atr', 'keltner'],
+            'volume': ['obv', 'vwap', 'money_flow']
+        }
+    
+    def calculate_indicators(self, df):
+        """Calculate all technical indicators"""
         if df.empty:
             return df
         
         df = df.copy()
         
-        # Price-based features
-        df['Returns'] = df['Close'].pct_change()
-        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
-        df['Price_Change'] = df['Close'].diff()
+        # Ensure we have required columns
+        required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+        for col in required_cols:
+            if col not in df.columns:
+                if col == 'Volume':
+                    df[col] = 1000000  # Default volume
+                else:
+                    df[col] = df['Close']  # Use Close for missing OHLC
         
-        # Moving averages
-        for window in [5, 10, 20, 50, 100, 200]:
-            df[f'SMA_{window}'] = df['Close'].rolling(window=window).mean()
-            df[f'EMA_{window}'] = df['Close'].ewm(span=window, adjust=False).mean()
-            df[f'MA_Ratio_{window}'] = df['Close'] / df[f'SMA_{window}']
+        # 1. Trend Indicators
+        # Simple Moving Averages
+        for period in [5, 10, 20, 50, 100, 200]:
+            df[f'SMA_{period}'] = ta.trend.sma_indicator(df['Close'], window=period)
+            df[f'EMA_{period}'] = ta.trend.ema_indicator(df['Close'], window=period)
         
-        # Momentum indicators
-        df['RSI'] = RSIIndicator(df['Close'], window=14).rsi()
-        df['Stoch_K'] = StochasticOscillator(df['High'], df['Low'], df['Close'], window=14).stoch()
-        df['Stoch_D'] = StochasticOscillator(df['High'], df['Low'], df['Close'], window=14).stoch_signal()
-        
-        # Trend indicators
-        macd = MACD(df['Close'])
+        # MACD
+        macd = ta.trend.MACD(df['Close'])
         df['MACD'] = macd.macd()
         df['MACD_Signal'] = macd.macd_signal()
         df['MACD_Diff'] = macd.macd_diff()
         
-        df['ADX'] = ADXIndicator(df['High'], df['Low'], df['Close'], window=14).adx()
+        # ADX
+        df['ADX'] = ta.trend.ADXIndicator(df['High'], df['Low'], df['Close'], window=14).adx()
         
-        # Volatility indicators
-        bb = BollingerBands(df['Close'], window=20, window_dev=2)
+        # 2. Momentum Indicators
+        # RSI
+        df['RSI'] = ta.momentum.RSIIndicator(df['Close'], window=14).rsi()
+        
+        # Stochastic
+        stoch = ta.momentum.StochasticOscillator(df['High'], df['Low'], df['Close'], window=14, smooth_window=3)
+        df['Stoch_K'] = stoch.stoch()
+        df['Stoch_D'] = stoch.stoch_signal()
+        
+        # Williams %R
+        df['Williams_R'] = ta.momentum.WilliamsRIndicator(df['High'], df['Low'], df['Close'], lbp=14).williams_r()
+        
+        # 3. Volatility Indicators
+        # Bollinger Bands
+        bb = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
         df['BB_Upper'] = bb.bollinger_hband()
         df['BB_Lower'] = bb.bollinger_lband()
+        df['BB_Middle'] = bb.bollinger_mavg()
         df['BB_Width'] = df['BB_Upper'] - df['BB_Lower']
         df['BB_Position'] = (df['Close'] - df['BB_Lower']) / (df['BB_Upper'] - df['BB_Lower'])
         
-        df['ATR'] = AverageTrueRange(df['High'], df['Low'], df['Close'], window=14).average_true_range()
+        # ATR
+        df['ATR'] = ta.volatility.AverageTrueRange(df['High'], df['Low'], df['Close'], window=14).average_true_range()
         
-        # Volume indicators
-        if 'Volume' in df.columns:
-            df['Volume_SMA'] = df['Volume'].rolling(window=20).mean()
-            df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA']
-            df['OBV'] = OnBalanceVolumeIndicator(df['Close'], df['Volume']).on_balance_volume()
-            df['VWAP'] = VolumeWeightedAveragePrice(df['High'], df['Low'], df['Close'], df['Volume'], window=20).volume_weighted_average_price()
+        # 4. Volume Indicators
+        # OBV
+        df['OBV'] = ta.volume.OnBalanceVolumeIndicator(df['Close'], df['Volume']).on_balance_volume()
         
-        # Price patterns
+        # VWAP
+        df['VWAP'] = ta.volume.VolumeWeightedAveragePrice(df['High'], df['Low'], df['Close'], df['Volume'], window=14).volume_weighted_average_price()
+        
+        # 5. Price Action Features
+        df['Returns'] = df['Close'].pct_change()
+        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
         df['High_Low_Ratio'] = df['High'] / df['Low']
         df['Close_Open_Ratio'] = df['Close'] / df['Open']
         
-        # Statistical features
-        df['Returns_Std_20'] = df['Returns'].rolling(window=20).std()
-        df['Returns_Skew_20'] = df['Returns'].rolling(window=20).skew()
-        df['Returns_Kurt_20'] = df['Returns'].rolling(window=20).kurt()
+        # 6. Support and Resistance Levels
+        df['Support_Level'] = df['Low'].rolling(20).min()
+        df['Resistance_Level'] = df['High'].rolling(20).max()
         
-        # Target variables
-        df['Target_5d_Return'] = df['Close'].pct_change(5).shift(-5)
-        df['Target_Direction'] = (df['Target_5d_Return'] > 0).astype(int)
-        
-        # Market regime
+        # 7. Market Regime
         df['Trend_Strength'] = df['ADX']
         df['Volatility_Regime'] = df['ATR'] / df['Close'].rolling(20).mean()
         
-        # Drop NaN values
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.dropna()
+        # 8. Candlestick Patterns (simplified)
+        df['Bullish_Engulfing'] = ((df['Close'] > df['Open']) & 
+                                  (df['Close'].shift(1) < df['Open'].shift(1)) &
+                                  (df['Close'] > df['Open'].shift(1)) &
+                                  (df['Open'] < df['Close'].shift(1))).astype(int)
+        
+        df['Bearish_Engulfing'] = ((df['Close'] < df['Open']) & 
+                                  (df['Close'].shift(1) > df['Open'].shift(1)) &
+                                  (df['Close'] < df['Open'].shift(1)) &
+                                  (df['Open'] > df['Close'].shift(1))).astype(int)
+        
+        # Fill NaN values
+        df = df.fillna(method='ffill').fillna(method='bfill')
         
         return df
     
-    def create_sequences(self, df, sequence_length=60):
-        """Create sequences for LSTM models"""
-        feature_cols = [col for col in df.columns if col not in ['Target_5d_Return', 'Target_Direction']]
+    def generate_signals(self, df):
+        """Generate trading signals based on technical indicators"""
+        if df.empty:
+            return {}
         
-        X, y = [], []
-        for i in range(len(df) - sequence_length - 5):
-            X.append(df[feature_cols].iloc[i:i+sequence_length].values)
-            y.append(df['Target_5d_Return'].iloc[i+sequence_length])
+        latest = df.iloc[-1]
         
-        return np.array(X), np.array(y)
+        signals = {
+            'RSI_Signal': 'BUY' if latest['RSI'] < 30 else 'SELL' if latest['RSI'] > 70 else 'NEUTRAL',
+            'MACD_Signal': 'BUY' if latest['MACD'] > latest['MACD_Signal'] else 'SELL',
+            'BB_Signal': 'BUY' if latest['BB_Position'] < 0.2 else 'SELL' if latest['BB_Position'] > 0.8 else 'NEUTRAL',
+            'Trend_Signal': 'BULLISH' if latest['Close'] > latest['SMA_50'] else 'BEARISH',
+            'Volume_Signal': 'BUY' if latest['Volume'] > latest['Volume'].rolling(20).mean().iloc[-1] * 1.5 else 'NEUTRAL'
+        }
+        
+        # Overall signal logic
+        buy_signals = sum([1 for sig in signals.values() if 'BUY' in str(sig) or 'BULLISH' in str(sig)])
+        sell_signals = sum([1 for sig in signals.values() if 'SELL' in str(sig) or 'BEARISH' in str(sig)])
+        
+        if buy_signals > sell_signals:
+            overall_signal = 'BUY'
+            confidence = buy_signals / (buy_signals + sell_signals)
+        elif sell_signals > buy_signals:
+            overall_signal = 'SELL'
+            confidence = sell_signals / (buy_signals + sell_signals)
+        else:
+            overall_signal = 'HOLD'
+            confidence = 0.5
+        
+        signals['Overall_Signal'] = overall_signal
+        signals['Confidence'] = confidence
+        
+        return signals
 
 # ============================================================================
-# MODEL TRAINING & VALIDATION
+# AI PREDICTION MODEL
 # ============================================================================
-class ModelTrainer:
+
+class StockPredictorAI:
+    """AI Model for predicting stock direction"""
+    
     def __init__(self):
         self.models = {}
-        self.scalers = {}
-        self.feature_importance = {}
+        self.scaler = StandardScaler()
+        self.news_analyzer = IndianMarketNews()
+        self.tech_analyzer = TechnicalAnalyzer()
         
-    def prepare_features(self, df, model_type='regression'):
-        """Prepare features for different model types"""
-        feature_cols = [col for col in df.columns 
-                       if col not in ['Target_5d_Return', 'Target_Direction', 'Date', 'timestamp']]
-        
-        X = df[feature_cols].copy()
-        
-        if model_type == 'regression':
-            y = df['Target_5d_Return'].values
-        else:  # classification
-            y = df['Target_Direction'].values
-        
-        # Time series split
-        tscv = TimeSeriesSplit(n_splits=5)
-        splits = list(tscv.split(X))
-        
-        return X, y, splits, feature_cols
-    
-    def train_xgboost(self, X, y, splits, feature_cols):
-        """Train XGBoost with hyperparameter optimization"""
-        best_score = -np.inf
-        best_model = None
-        
-        # Hyperparameter grid
-        param_grid = {
-            'n_estimators': [100, 200, 300],
-            'max_depth': [3, 5, 7],
-            'learning_rate': [0.01, 0.05, 0.1],
-            'subsample': [0.8, 0.9, 1.0],
-            'colsample_bytree': [0.8, 0.9, 1.0],
-            'min_child_weight': [1, 3, 5]
-        }
-        
-        cv_scores = []
-        for train_idx, val_idx in splits[:3]:  # Use 3 folds for speed
-            X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-            
-            # Randomized search
-            model = XGBRegressor(
-                n_estimators=200,
-                max_depth=5,
-                learning_rate=0.05,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                min_child_weight=3,
-                random_state=42,
-                n_jobs=-1
-            )
-            
-            model.fit(X_train, y_train, 
-                     eval_set=[(X_val, y_val)],
-                     early_stopping_rounds=50,
-                     verbose=False)
-            
-            # Feature importance
-            importance = pd.DataFrame({
-                'feature': feature_cols,
-                'importance': model.feature_importances_
-            }).sort_values('importance', ascending=False)
-            
-            score = model.score(X_val, y_val)
-            cv_scores.append(score)
-            
-            if score > best_score:
-                best_score = score
-                best_model = model
-                self.feature_importance['xgb'] = importance
-        
-        return best_model, np.mean(cv_scores)
-    
-    def train_lstm(self, X_sequences, y, splits):
-        """Train LSTM model with attention"""
-        best_score = -np.inf
-        best_model = None
-        
-        for train_idx, val_idx in splits[:2]:  # Use 2 folds for LSTM
-            X_train_seq, X_val_seq = X_sequences[train_idx], X_sequences[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-            
-            # Build LSTM with Attention
-            inputs = Input(shape=(X_train_seq.shape[1], X_train_seq.shape[2]))
-            lstm_out = Bidirectional(LSTM(64, return_sequences=True))(inputs)
-            lstm_out = Dropout(0.3)(lstm_out)
-            
-            # Attention layer
-            attention = Dense(1, activation='tanh')(lstm_out)
-            attention = tf.keras.layers.Flatten()(attention)
-            attention = tf.keras.layers.Activation('softmax')(attention)
-            attention = tf.keras.layers.RepeatVector(64)(attention)
-            attention = tf.keras.layers.Permute([2, 1])(attention)
-            
-            sent_representation = tf.keras.layers.multiply([lstm_out, attention])
-            sent_representation = tf.keras.layers.Lambda(lambda xin: tf.keras.backend.sum(xin, axis=1))(sent_representation)
-            
-            outputs = Dense(32, activation='relu')(sent_representation)
-            outputs = Dropout(0.3)(outputs)
-            outputs = Dense(16, activation='relu')(outputs)
-            outputs = Dense(1)(outputs)
-            
-            model = Model(inputs=inputs, outputs=outputs)
-            
-            model.compile(
-                optimizer=Adam(learning_rate=0.001),
-                loss='mse',
-                metrics=['mae']
-            )
-            
-            early_stop = EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)
-            reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=10, min_lr=1e-6)
-            
-            history = model.fit(
-                X_train_seq, y_train,
-                validation_data=(X_val_seq, y_val),
-                epochs=100,
-                batch_size=32,
-                callbacks=[early_stop, reduce_lr],
-                verbose=0
-            )
-            
-            val_score = model.evaluate(X_val_seq, y_val, verbose=0)[1]  # MAE
-            if val_score > best_score:  # Lower MAE is better
-                best_score = val_score
-                best_model = model
-        
-        return best_model, best_score
-    
-    def train_ensemble(self, X, y, splits):
-        """Train ensemble of models"""
-        models = {
-            'xgb': XGBRegressor(n_estimators=200, max_depth=5, learning_rate=0.05, random_state=42),
-            'rf': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
-            'gbr': GradientBoostingRegressor(n_estimators=100, learning_rate=0.05, random_state=42)
-        }
-        
-        predictions = []
-        actuals = []
-        
-        for name, model in models.items():
-            model_scores = []
-            for train_idx, val_idx in splits[:3]:
-                X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
-                y_train, y_val = y[train_idx], y[val_idx]
-                
-                model.fit(X_train, y_train)
-                pred = model.predict(X_val)
-                
-                model_scores.append(mean_absolute_error(y_val, pred))
-                predictions.append(pred)
-                actuals.append(y_val)
-            
-            self.models[name] = model
-            st.write(f"{name.upper()} MAE: {np.mean(model_scores):.4f}")
-        
-        # Stack predictions
-        if len(predictions) > 0:
-            stacked_pred = np.mean(predictions, axis=0)
-            final_mae = mean_absolute_error(actuals[0], stacked_pred)
-            return stacked_pred, final_mae
-        
-        return None, None
-
-# ============================================================================
-# BACKTESTING ENGINE
-# ============================================================================
-class BacktestingEngine:
-    def __init__(self, symbol, initial_capital=100000):
-        self.symbol = symbol
-        self.initial_capital = initial_capital
-        
-    class MLStrategy(Strategy):
-        def init(self):
-            # Initialize indicators
-            self.sma_short = self.I(lambda x: pd.Series(x).rolling(20).mean(), self.data.Close)
-            self.sma_long = self.I(lambda x: pd.Series(x).rolling(50).mean(), self.data.Close)
-            self.rsi = self.I(lambda x: pd.Series(x).rolling(14).apply(
-                lambda x: 100 - (100 / (1 + (pd.Series(x).iloc[1:].mean() / pd.Series(x).iloc[:-1].mean())))), 
-                self.data.Close)
-            
-            # Prediction from ML model
-            self.prediction = self.I(lambda: np.zeros(len(self.data)), name='prediction')
-            
-        def next(self):
-            # Trading logic based on ML predictions
-            current_price = self.data.Close[-1]
-            
-            # Buy signal: prediction positive and RSI not overbought
-            if self.prediction[-1] > 0.02 and self.rsi[-1] < 70:
-                if not self.position:
-                    self.buy(size=0.1)  # Risk management: 10% position
-                    
-            # Sell signal: prediction negative or RSI overbought
-            elif self.prediction[-1] < -0.02 or self.rsi[-1] > 80:
-                if self.position:
-                    self.position.close()
-                    
-            # Stop loss and take profit
-            if self.position:
-                if self.position.pl_pct < -0.02:  # 2% stop loss
-                    self.position.close()
-                elif self.position.pl_pct > 0.04:  # 4% take profit
-                    self.position.close()
-    
-    def run_backtest(self, df, predictions):
-        """Run comprehensive backtest"""
+    def prepare_data(self, symbol, period='1y'):
+        """Prepare data for training/prediction"""
         try:
-            # Prepare data for backtesting
-            bt_data = pd.DataFrame({
-                'Open': df['Open'],
-                'High': df['High'],
-                'Low': df['Low'],
-                'Close': df['Close'],
-                'Volume': df['Volume']
-            })
+            # Fetch stock data
+            stock = yf.Ticker(symbol)
+            df = stock.history(period=period)
             
-            # Add predictions
-            bt_data['Prediction'] = np.zeros(len(bt_data))
-            bt_data.iloc[-len(predictions):, bt_data.columns.get_loc('Prediction')] = predictions
+            if df.empty:
+                st.error(f"No data available for {symbol}")
+                return None
             
-            # Run backtest
-            bt = Backtest(
-                bt_data,
-                self.MLStrategy,
-                cash=self.initial_capital,
-                commission=0.001,  # 0.1% commission
-                exclusive_orders=True
-            )
+            # Add technical indicators
+            df = self.tech_analyzer.calculate_indicators(df)
             
-            results = bt.run()
+            # Add news sentiment (last 30 days rolling average)
+            news_data = self.news_analyzer.fetch_news(symbol.split('.')[0])
+            if news_data:
+                sentiment_scores = [news['sentiment'] for news in news_data]
+                avg_sentiment = np.mean(sentiment_scores) if sentiment_scores else 0
+            else:
+                avg_sentiment = 0
             
-            # Generate detailed statistics
-            stats = {
-                'Sharpe Ratio': results['Sharpe Ratio'],
-                'Max Drawdown': results['Max. Drawdown [%]'],
-                'Win Rate': results['Win Rate [%]'],
-                'Total Return': results['Return [%]'],
-                'Total Trades': results['# Trades'],
-                'Profit Factor': results['Profit Factor']
-            }
+            # Add sentiment as a feature
+            df['News_Sentiment'] = avg_sentiment
             
-            return results, stats
+            # Create target variable (next 5 days return)
+            df['Target'] = (df['Close'].shift(-5) > df['Close']).astype(int)
+            
+            # Remove last 5 rows (no future target)
+            df = df.iloc[:-5]
+            
+            return df
             
         except Exception as e:
-            st.error(f"Backtesting error: {str(e)}")
-            return None, None
-
-# ============================================================================
-# PERFORMANCE ANALYTICS
-# ============================================================================
-class PerformanceAnalytics:
-    @staticmethod
-    def calculate_metrics(y_true, y_pred, returns):
-        """Calculate comprehensive performance metrics"""
-        metrics = {}
-        
-        # Regression metrics
-        metrics['MAE'] = mean_absolute_error(y_true, y_pred)
-        metrics['MSE'] = mean_squared_error(y_true, y_pred)
-        metrics['RMSE'] = np.sqrt(metrics['MSE'])
-        metrics['R2'] = r2_score(y_true, y_pred)
-        
-        # Direction accuracy
-        pred_direction = (y_pred > 0).astype(int)
-        true_direction = (y_true > 0).astype(int)
-        metrics['Accuracy'] = accuracy_score(true_direction, pred_direction)
-        
-        # Classification report
-        report = classification_report(true_direction, pred_direction, output_dict=True)
-        metrics['Precision'] = report['1']['precision']
-        metrics['Recall'] = report['1']['recall']
-        metrics['F1-Score'] = report['1']['f1-score']
-        
-        # Financial metrics
-        if returns is not None:
-            sharpe_ratio = np.sqrt(252) * returns.mean() / returns.std() if returns.std() > 0 else 0
-            metrics['Sharpe_Ratio'] = sharpe_ratio
-            
-            # Sortino ratio (only downside deviation)
-            downside_returns = returns[returns < 0]
-            downside_std = downside_returns.std() if len(downside_returns) > 0 else 0
-            sortino_ratio = np.sqrt(252) * returns.mean() / downside_std if downside_std > 0 else 0
-            metrics['Sortino_Ratio'] = sortino_ratio
-            
-            # Calmar ratio
-            max_dd = (returns.cumsum().cummax() - returns.cumsum()).max()
-            calmar_ratio = returns.mean() * 252 / max_dd if max_dd > 0 else 0
-            metrics['Calmar_Ratio'] = calmar_ratio
-        
-        return metrics
+            st.error(f"Error preparing data: {str(e)}")
+            return None
     
-    @staticmethod
-    def plot_predictions(df, predictions, model_name):
-        """Create visualization of predictions vs actual"""
-        fig = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=('Price & Predictions', 'Prediction Error'),
-            vertical_spacing=0.1,
-            row_heights=[0.7, 0.3]
-        )
+    def train_model(self, df, model_type='xgboost'):
+        """Train prediction model"""
+        if df is None or len(df) < 100:
+            st.warning("Insufficient data for training")
+            return None
         
-        # Price and predictions
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['Close'], name='Price', line=dict(color='blue')),
-            row=1, col=1
-        )
+        # Prepare features and target
+        feature_cols = [col for col in df.columns if col not in ['Target', 'Open', 'High', 'Low', 'Close', 'Volume']]
+        X = df[feature_cols].fillna(0)
+        y = df['Target']
         
-        fig.add_trace(
-            go.Scatter(x=df.index[-len(predictions):], 
-                      y=predictions * df['Close'].mean() + df['Close'].mean(),
-                      name=f'{model_name} Predictions', 
-                      line=dict(color='green', dash='dash')),
-            row=1, col=1
-        )
+        # Scale features
+        X_scaled = self.scaler.fit_transform(X)
         
-        # Prediction error
-        actual_returns = df['Target_5d_Return'].values[-len(predictions):]
-        error = predictions - actual_returns
+        # Split data (time-series aware)
+        split_idx = int(len(X) * 0.8)
+        X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
+        y_train, y_test = y[:split_idx], y[split_idx:]
         
-        fig.add_trace(
-            go.Scatter(x=df.index[-len(predictions):], y=error, 
-                      name='Prediction Error', line=dict(color='red')),
-            row=2, col=1
-        )
+        # Train model
+        if model_type == 'xgboost':
+            model = XGBClassifier(
+                n_estimators=100,
+                max_depth=5,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric='logloss'
+            )
+        elif model_type == 'random_forest':
+            model = RandomForestClassifier(
+                n_estimators=100,
+                max_depth=10,
+                random_state=42
+            )
+        elif model_type == 'gradient_boosting':
+            model = GradientBoostingClassifier(
+                n_estimators=100,
+                learning_rate=0.1,
+                max_depth=5,
+                random_state=42
+            )
+        else:  # lightgbm
+            model = lgb.LGBMClassifier(
+                n_estimators=100,
+                learning_rate=0.1,
+                max_depth=5,
+                random_state=42
+            )
         
-        fig.add_hline(y=0, line_dash="dot", line_color="white", row=2, col=1)
+        # Train
+        model.fit(X_train, y_train)
         
-        fig.update_layout(height=800, template='plotly_dark', showlegend=True)
+        # Evaluate
+        y_pred = model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
         
-        return fig
+        self.models[model_type] = {
+            'model': model,
+            'accuracy': accuracy,
+            'feature_importance': dict(zip(feature_cols, model.feature_importances_)) if hasattr(model, 'feature_importances_') else {}
+        }
+        
+        return model, accuracy
+    
+    def predict_direction(self, symbol, period='6mo'):
+        """Predict stock direction (UP/DOWN)"""
+        try:
+            # Get latest data
+            df = self.prepare_data(symbol, period)
+            if df is None:
+                return None
+            
+            # Prepare features for prediction
+            feature_cols = [col for col in df.columns if col not in ['Target', 'Open', 'High', 'Low', 'Close', 'Volume']]
+            X_latest = df[feature_cols].iloc[-30:].fillna(0)  # Last 30 days for context
+            X_scaled = self.scaler.transform(X_latest)
+            
+            # Train multiple models and get consensus
+            predictions = []
+            confidences = []
+            
+            for model_type in ['xgboost', 'random_forest', 'gradient_boosting']:
+                model_info = self.models.get(model_type)
+                
+                if model_info is None:
+                    # Train model if not already trained
+                    model, accuracy = self.train_model(df, model_type)
+                    if model is None:
+                        continue
+                    model_info = self.models[model_type]
+                
+                # Make prediction
+                pred_proba = model_info['model'].predict_proba(X_scaled[-1:].reshape(1, -1))
+                prediction = 1 if pred_proba[0][1] > 0.5 else 0
+                confidence = max(pred_proba[0])
+                
+                predictions.append(prediction)
+                confidences.append(confidence * model_info['accuracy'])  # Weight by model accuracy
+            
+            if not predictions:
+                return None
+            
+            # Consensus prediction
+            consensus = 1 if sum(predictions) >= 2 else 0
+            avg_confidence = np.mean(confidences) if confidences else 0.5
+            
+            # Get technical signals
+            tech_signals = self.tech_analyzer.generate_signals(df)
+            
+            # Get news sentiment
+            news = self.news_analyzer.fetch_news(symbol.split('.')[0])
+            news_sentiment = np.mean([n['sentiment'] for n in news]) if news else 0
+            
+            # Final decision with weighted factors
+            final_signal = "BUY" if consensus == 1 else "SELL"
+            
+            # Adjust based on technicals and news
+            if tech_signals.get('Overall_Signal') == 'SELL' and final_signal == 'BUY':
+                avg_confidence *= 0.8  # Reduce confidence
+            elif tech_signals.get('Overall_Signal') == 'BUY' and final_signal == 'SELL':
+                avg_confidence *= 0.8
+            
+            if news_sentiment < -0.1 and final_signal == 'BUY':
+                avg_confidence *= 0.7
+            elif news_sentiment > 0.1 and final_signal == 'SELL':
+                avg_confidence *= 0.7
+            
+            result = {
+                'symbol': symbol,
+                'prediction': 'UP' if consensus == 1 else 'DOWN',
+                'signal': final_signal,
+                'confidence': min(max(avg_confidence, 0), 1),  # Clamp between 0 and 1
+                'price': df['Close'].iloc[-1],
+                'change_pct': ((df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100,
+                'technical_signals': tech_signals,
+                'news_sentiment': news_sentiment,
+                'model_accuracy': np.mean([self.models[m]['accuracy'] for m in self.models]),
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+            
+            return result
+            
+        except Exception as e:
+            st.error(f"Prediction error: {str(e)}")
+            return None
 
 # ============================================================================
 # STREAMLIT APP
 # ============================================================================
+
 def main():
-    st.title("📈 Quantitative Trading AI Platform")
-    st.markdown("---")
+    # Header with Indian Theme
+    st.markdown("<h1 class='main-header'>🇮🇳 Indian Market Predictor AI</h1>", unsafe_allow_html=True)
+    st.markdown("<div class='indian-flag'></div>", unsafe_allow_html=True)
     
-    # Sidebar configuration
+    # Initialize session state
+    if 'predictor' not in st.session_state:
+        st.session_state.predictor = StockPredictorAI()
+    if 'news' not in st.session_state:
+        st.session_state.news = IndianMarketNews()
+    
+    # Sidebar
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.markdown("### 📊 Market Selection")
         
-        symbol = st.text_input("Stock Symbol", "RELIANCE.NS").upper()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input("Start Date", 
-                                      value=datetime.now() - timedelta(days=365*2))
-        with col2:
-            end_date = st.date_input("End Date", value=datetime.now())
-        
-        initial_capital = st.number_input("Initial Capital", value=100000, min_value=1000)
-        
-        st.header("🎯 Model Selection")
-        models_to_train = st.multiselect(
-            "Select Models",
-            ["XGBoost", "LSTM", "Ensemble", "Random Forest", "LightGBM"],
-            default=["XGBoost", "LSTM", "Ensemble"]
+        # Asset Type Selection
+        asset_type = st.selectbox(
+            "Select Asset Type",
+            ["Stocks (Nifty 50)", "Indices", "Commodities", "Custom Symbol"]
         )
         
-        st.header("📊 Backtesting")
-        run_backtest = st.checkbox("Run Backtest", value=True)
-        show_advanced = st.checkbox("Show Advanced Metrics", value=False)
+        symbol = ""
         
-        if st.button("🚀 Train & Evaluate", type="primary", use_container_width=True):
-            st.session_state.run_analysis = True
-        else:
-            if 'run_analysis' not in st.session_state:
-                st.session_state.run_analysis = False
+        if asset_type == "Stocks (Nifty 50)":
+            selected_stock = st.selectbox(
+                "Select Stock",
+                list(IndianMarketDatabase.NIFTY_50.keys())
+            )
+            symbol = IndianMarketDatabase.NIFTY_50[selected_stock]
+            
+        elif asset_type == "Indices":
+            selected_index = st.selectbox(
+                "Select Index",
+                list(IndianMarketDatabase.INDICES.keys())
+            )
+            symbol = IndianMarketDatabase.INDICES[selected_index]
+            
+        elif asset_type == "Commodities":
+            selected_commodity = st.selectbox(
+                "Select Commodity",
+                list(IndianMarketDatabase.COMMODITIES.keys())
+            )
+            symbol = IndianMarketDatabase.COMMODITIES[selected_commodity]
+            
+        else:  # Custom Symbol
+            custom_symbol = st.text_input("Enter Symbol (e.g., RELIANCE.NS, ^NSEI)", "RELIANCE.NS")
+            symbol = custom_symbol.upper()
+        
+        # Time Period
+        period = st.selectbox(
+            "Analysis Period",
+            ["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+            index=2
+        )
+        
+        # Prediction Horizon
+        horizon = st.selectbox(
+            "Prediction Horizon",
+            ["Next 5 Days", "Next 10 Days", "Next Month"],
+            index=0
+        )
+        
+        # Additional Options
+        st.markdown("---")
+        st.markdown("### ⚙️ Settings")
+        
+        show_technical = st.checkbox("Show Technical Analysis", value=True)
+        show_news = st.checkbox("Show News & Sentiment", value=True)
+        show_models = st.checkbox("Show Model Details", value=False)
+        
+        # Predict Button
+        st.markdown("---")
+        predict_button = st.button(
+            "🚀 PREDICT NOW",
+            type="primary",
+            use_container_width=True
+        )
     
-    # Main content
-    if st.session_state.run_analysis:
-        with st.spinner("🔄 Fetching data and training models..."):
+    # Main Content
+    if predict_button and symbol:
+        with st.spinner("🔄 Analyzing market data and training AI models..."):
+            # Progress bar
+            progress_bar = st.progress(0)
             
-            # Initialize pipeline
-            pipeline = DataPipeline(symbol, start_date, end_date)
+            # Step 1: Fetch Data
+            progress_bar.progress(20)
+            st.info(f"📥 Fetching data for {symbol}...")
             
-            # Tab layout
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📈 Data & Features", 
-                "🤖 Model Training", 
-                "📊 Backtest Results", 
-                "📋 Performance Report"
-            ])
+            # Step 2: Make Prediction
+            progress_bar.progress(50)
+            st.info("🤖 Training AI models and making prediction...")
             
-            with tab1:
-                st.header("Data Analysis")
+            result = st.session_state.predictor.predict_direction(symbol, period)
+            
+            progress_bar.progress(80)
+            
+            if result:
+                # Display Prediction Result
+                st.markdown("---")
                 
-                # Fetch data
-                df = pipeline.fetch_data()
+                # Prediction Card
+                if result['signal'] == 'BUY':
+                    card_class = "buy-signal"
+                    emoji = "🚀"
+                elif result['signal'] == 'SELL':
+                    card_class = "sell-signal"
+                    emoji = "⚠️"
+                else:
+                    card_class = "hold-signal"
+                    emoji = "⏸️"
                 
-                if not df.empty:
-                    col1, col2 = st.columns([2, 1])
+                st.markdown(f"""
+                <div class="prediction-card {card_class}">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <h2 style="margin: 0; color: white;">{symbol}</h2>
+                            <p style="color: #aaa; margin: 5px 0;">Last Price: ₹{result['price']:.2f} ({result['change_pct']:+.2f}%)</p>
+                        </div>
+                        <div style="text-align: right;">
+                            <h1 style="margin: 0; font-size: 3rem;">{emoji} {result['signal']}</h1>
+                            <p style="color: #aaa;">Prediction: {result['prediction']}</p>
+                        </div>
+                    </div>
                     
-                    with col1:
-                        # Price chart
+                    <div style="margin-top: 20px;">
+                        <div style="background: rgba(255,255,255,0.1); padding: 15px; border-radius: 10px;">
+                            <h3 style="margin: 0 0 10px 0;">Confidence Level: {result['confidence']:.1%}</h3>
+                            <div style="height: 10px; background: rgba(255,255,255,0.2); border-radius: 5px; overflow: hidden;">
+                                <div style="height: 100%; width: {result['confidence']*100}%; 
+                                         background: {'#4CAF50' if result['signal'] == 'BUY' else '#FF5252'}; 
+                                         border-radius: 5px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px;">
+                        <div class="metric-card">
+                            <h4 style="margin: 0; color: #aaa;">Model Accuracy</h4>
+                            <p style="font-size: 1.5rem; margin: 10px 0; color: white;">{result['model_accuracy']:.1%}</p>
+                        </div>
+                        <div class="metric-card">
+                            <h4 style="margin: 0; color: #aaa;">News Sentiment</h4>
+                            <p style="font-size: 1.5rem; margin: 10px 0; 
+                                    color: {'#4CAF50' if result['news_sentiment'] > 0 else '#FF5252' if result['news_sentiment'] < 0 else '#FFC107'}">
+                                {result['news_sentiment']:+.2f}
+                            </p>
+                        </div>
+                        <div class="metric-card">
+                            <h4 style="margin: 0; color: #aaa;">Technical Signal</h4>
+                            <p style="font-size: 1.5rem; margin: 10px 0; 
+                                    color: {'#4CAF50' if result['technical_signals'].get('Overall_Signal') == 'BUY' else '#FF5252'}">
+                                {result['technical_signals'].get('Overall_Signal', 'NEUTRAL')}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                progress_bar.progress(100)
+                
+                # Tabs for Detailed Analysis
+                tab1, tab2, tab3, tab4 = st.tabs(["📈 Chart", "🔍 Technicals", "📰 News", "📊 Details"])
+                
+                with tab1:
+                    # Price Chart
+                    try:
+                        stock_data = yf.Ticker(symbol)
+                        hist = stock_data.history(period=period)
+                        
                         fig = go.Figure()
+                        
+                        # Candlestick chart
                         fig.add_trace(go.Candlestick(
-                            x=df.index,
-                            open=df['Open'],
-                            high=df['High'],
-                            low=df['Low'],
-                            close=df['Close'],
-                            name='OHLC'
+                            x=hist.index,
+                            open=hist['Open'],
+                            high=hist['High'],
+                            low=hist['Low'],
+                            close=hist['Close'],
+                            name='Price',
+                            increasing_line_color='#00C853',
+                            decreasing_line_color='#FF5252'
                         ))
+                        
+                        # Add moving averages
+                        for ma in [20, 50, 200]:
+                            if len(hist) > ma:
+                                fig.add_trace(go.Scatter(
+                                    x=hist.index,
+                                    y=hist['Close'].rolling(ma).mean(),
+                                    name=f'MA {ma}',
+                                    line=dict(width=1),
+                                    opacity=0.7
+                                ))
                         
                         fig.update_layout(
                             title=f"{symbol} Price Chart",
-                            yaxis_title="Price",
+                            yaxis_title="Price (₹)",
                             xaxis_title="Date",
                             template="plotly_dark",
-                            height=500
+                            height=500,
+                            showlegend=True
                         )
                         
                         st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col2:
-                        # Basic statistics
-                        st.subheader("📊 Statistics")
-                        stats_df = pd.DataFrame({
-                            'Statistic': ['Current Price', '50-Day MA', '200-Day MA', 
-                                         '52-Week High', '52-Week Low', 'Volume Avg'],
-                            'Value': [
-                                f"₹{df['Close'].iloc[-1]:.2f}",
-                                f"₹{df['Close'].rolling(50).mean().iloc[-1]:.2f}",
-                                f"₹{df['Close'].rolling(200).mean().iloc[-1]:.2f}",
-                                f"₹{df['Close'].rolling(252).max().iloc[-1]:.2f}",
-                                f"₹{df['Close'].rolling(252).min().iloc[-1]:.2f}",
-                                f"{df['Volume'].mean():,.0f}"
-                            ]
-                        })
                         
-                        st.dataframe(stats_df, hide_index=True, use_container_width=True)
-                    
-                    # Calculate features
-                    with st.spinner("Calculating technical indicators..."):
-                        df_features = pipeline.calculate_features(df)
-                        
-                        st.subheader("📈 Feature Overview")
-                        st.dataframe(df_features.describe(), use_container_width=True)
-                        
-                        # Feature correlation
-                        st.subheader("🔗 Feature Correlation Heatmap")
-                        corr_matrix = df_features.corr().round(2)
-                        
-                        fig_corr = go.Figure(data=go.Heatmap(
-                            z=corr_matrix.values,
-                            x=corr_matrix.columns,
-                            y=corr_matrix.columns,
-                            colorscale='RdBu',
-                            zmin=-1, zmax=1
-                        ))
-                        
-                        fig_corr.update_layout(height=600)
-                        st.plotly_chart(fig_corr, use_container_width=True)
-            
-            with tab2:
-                st.header("Model Training Results")
+                    except Exception as e:
+                        st.error(f"Chart error: {str(e)}")
                 
-                if 'df_features' in locals() and not df_features.empty:
-                    # Initialize trainer
-                    trainer = ModelTrainer()
-                    
-                    # Prepare data
-                    X, y, splits, feature_cols = trainer.prepare_features(df_features)
-                    
-                    # Train selected models
-                    results = {}
-                    
-                    if "XGBoost" in models_to_train:
-                        with st.spinner("Training XGBoost..."):
-                            xgb_model, xgb_score = trainer.train_xgboost(X, y, splits, feature_cols)
-                            results['XGBoost'] = {
-                                'model': xgb_model,
-                                'score': xgb_score,
-                                'predictions': xgb_model.predict(X.iloc[-100:]) if xgb_model else None
-                            }
+                with tab2:
+                    if show_technical and result['technical_signals']:
+                        st.subheader("Technical Analysis Signals")
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            st.markdown("#### 📊 Indicator Signals")
+                            for indicator, signal in result['technical_signals'].items():
+                                if indicator not in ['Overall_Signal', 'Confidence']:
+                                    color = "#4CAF50" if 'BUY' in str(signal) or 'BULLISH' in str(signal) else "#FF5252" if 'SELL' in str(signal) or 'BEARISH' in str(signal) else "#FFC107"
+                                    st.markdown(f"""
+                                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #333;">
+                                        <span>{indicator.replace('_', ' ')}:</span>
+                                        <span style="color: {color}; font-weight: bold;">{signal}</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.markdown("#### 📈 Key Levels")
                             
-                            # Feature importance
-                            if 'xgb' in trainer.feature_importance:
-                                st.subheader("XGBoost Feature Importance")
-                                fig_imp = go.Figure(data=[go.Bar(
-                                    x=trainer.feature_importance['xgb'].head(15)['importance'],
-                                    y=trainer.feature_importance['xgb'].head(15)['feature'],
-                                    orientation='h'
-                                )])
+                            # Calculate support and resistance
+                            try:
+                                stock_data = yf.Ticker(symbol)
+                                hist = stock_data.history(period="1mo")
                                 
-                                fig_imp.update_layout(height=400)
-                                st.plotly_chart(fig_imp, use_container_width=True)
-                    
-                    if "LSTM" in models_to_train:
-                        with st.spinner("Training LSTM..."):
-                            X_seq, y_seq = pipeline.create_sequences(df_features)
-                            lstm_model, lstm_score = trainer.train_lstm(X_seq, y_seq, splits)
-                            results['LSTM'] = {
-                                'model': lstm_model,
-                                'score': lstm_score,
-                                'predictions': lstm_model.predict(X_seq[-100:]) if lstm_model else None
-                            }
-                    
-                    if "Ensemble" in models_to_train:
-                        with st.spinner("Training Ensemble..."):
-                            ensemble_pred, ensemble_score = trainer.train_ensemble(X, y, splits)
-                            results['Ensemble'] = {
-                                'model': trainer.models,
-                                'score': ensemble_score,
-                                'predictions': ensemble_pred
-                            }
-                    
-                    # Display model comparison
-                    st.subheader("📊 Model Comparison")
-                    
-                    comparison_data = []
-                    for model_name, result in results.items():
-                        comparison_data.append({
-                            'Model': model_name,
-                            'Score': result['score'] if result['score'] else 0,
-                            'Predictions': '✅' if result['predictions'] is not None else '❌'
-                        })
-                    
-                    if comparison_data:
-                        comparison_df = pd.DataFrame(comparison_data)
-                        st.dataframe(comparison_df, use_container_width=True)
-                        
-                        # Visual comparison
-                        fig_models = go.Figure(data=[go.Bar(
-                            x=comparison_df['Model'],
-                            y=comparison_df['Score'],
-                            text=[f'{s:.4f}' for s in comparison_df['Score']],
-                            textposition='auto',
-                            marker_color=['#00b09b', '#96c93d', '#ff416c', '#ff4b2b'][:len(comparison_df)]
-                        )])
-                        
-                        fig_models.update_layout(title="Model Performance Comparison")
-                        st.plotly_chart(fig_models, use_container_width=True)
-            
-            with tab3:
-                st.header("Backtesting Results")
+                                if not hist.empty:
+                                    current_price = hist['Close'].iloc[-1]
+                                    support = hist['Low'].rolling(20).min().iloc[-1]
+                                    resistance = hist['High'].rolling(20).max().iloc[-1]
+                                    
+                                    st.metric("Current Price", f"₹{current_price:.2f}")
+                                    st.metric("Support Level", f"₹{support:.2f}")
+                                    st.metric("Resistance Level", f"₹{resistance:.2f}")
+                                    
+                                    # Progress bar for price position
+                                    price_range = resistance - support
+                                    if price_range > 0:
+                                        position = (current_price - support) / price_range
+                                        st.markdown(f"**Price Position:**")
+                                        st.progress(position)
+                                        
+                                        if position < 0.3:
+                                            st.info("Near Support - Potential buying opportunity")
+                                        elif position > 0.7:
+                                            st.warning("Near Resistance - Potential selling opportunity")
+                            except:
+                                pass
                 
-                if run_backtest and 'results' in locals():
-                    # Initialize backtesting engine
-                    backtester = BacktestingEngine(symbol, initial_capital)
-                    
-                    # Use ensemble predictions if available
-                    best_predictions = None
-                    if 'Ensemble' in results:
-                        best_predictions = results['Ensemble']['predictions']
-                    elif 'XGBoost' in results:
-                        best_predictions = results['XGBoost']['predictions']
-                    
-                    if best_predictions is not None:
-                        with st.spinner("Running backtest..."):
-                            bt_results, stats = backtester.run_backtest(df, best_predictions)
-                            
-                            if bt_results:
-                                col1, col2 = st.columns(2)
+                with tab3:
+                    if show_news:
+                        st.subheader("Latest Market News & Sentiment")
+                        
+                        # Overall market sentiment
+                        market_sentiment, sentiment_label = st.session_state.news.get_market_sentiment()
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Market Sentiment", sentiment_label)
+                        with col2:
+                            st.metric("Sentiment Score", f"{market_sentiment:+.2f}")
+                        with col3:
+                            st.metric("News Count", "15+")
+                        
+                        # Fetch and display news for the symbol
+                        news_items = st.session_state.news.fetch_news(symbol.split('.')[0])
+                        
+                        if news_items:
+                            for news in news_items[:5]:  # Show top 5 news
+                                sentiment_color = "#4CAF50" if news['sentiment'] > 0.05 else "#FF5252" if news['sentiment'] < -0.05 else "#FFC107"
                                 
-                                with col1:
-                                    st.subheader("📈 Equity Curve")
-                                    
-                                    # Plot equity curve
-                                    fig_equity = go.Figure()
-                                    fig_equity.add_trace(go.Scatter(
-                                        x=bt_results['_equity_curve'].index,
-                                        y=bt_results['_equity_curve']['Equity'],
-                                        name='Portfolio Value',
-                                        line=dict(color='#00b09b', width=3)
-                                    ))
-                                    
-                                    fig_equity.update_layout(
-                                        title="Portfolio Growth",
-                                        yaxis_title="Value (₹)",
-                                        template="plotly_dark"
-                                    )
-                                    
-                                    st.plotly_chart(fig_equity, use_container_width=True)
-                                
-                                with col2:
-                                    st.subheader("📊 Key Metrics")
-                                    
-                                    metrics_df = pd.DataFrame(list(stats.items()), 
-                                                            columns=['Metric', 'Value'])
-                                    st.dataframe(metrics_df, use_container_width=True)
-                                    
-                                    # Drawdown chart
-                                    fig_dd = go.Figure()
-                                    fig_dd.add_trace(go.Scatter(
-                                        x=bt_results['_equity_curve'].index,
-                                        y=bt_results['_equity_curve']['Drawdown [%]'],
-                                        fill='tozeroy',
-                                        name='Drawdown',
-                                        line=dict(color='#ff416c')
-                                    ))
-                                    
-                                    fig_dd.update_layout(
-                                        title="Portfolio Drawdown",
-                                        yaxis_title="Drawdown %",
-                                        template="plotly_dark"
-                                    )
-                                    
-                                    st.plotly_chart(fig_dd, use_container_width=True)
-                                
-                                # Trade analysis
-                                st.subheader("📋 Trade Analysis")
-                                
-                                trades_df = bt_results['_trades']
-                                if not trades_df.empty:
-                                    trades_display = trades_df[[
-                                        'Size', 'EntryPrice', 'ExitPrice', 
-                                        'PnL', 'ReturnPct', 'Duration'
-                                    ]].copy()
-                                    
-                                    trades_display.columns = [
-                                        'Size', 'Entry', 'Exit', 'P&L', 'Return %', 'Duration'
-                                    ]
-                                    
-                                    st.dataframe(trades_display.style.format({
-                                        'Entry': '₹{:.2f}',
-                                        'Exit': '₹{:.2f}',
-                                        'P&L': '₹{:.2f}',
-                                        'Return %': '{:.2f}%'
-                                    }), use_container_width=True)
-            
-            with tab4:
-                st.header("Comprehensive Performance Report")
+                                st.markdown(f"""
+                                <div class="news-card">
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                        <small style="color: #888;">{news['source']}</small>
+                                        <small style="color: {sentiment_color}; font-weight: bold;">{news['sentiment_label']}</small>
+                                    </div>
+                                    <a href="{news['link']}" target="_blank" style="color: white; text-decoration: none; font-weight: 500;">
+                                        {news['title']}
+                                    </a>
+                                    <div style="margin-top: 8px;">
+                                        <small style="color: #aaa;">{news['published'][:16]}</small>
+                                        {' '.join([f'<span style="background: #333; padding: 2px 6px; border-radius: 3px; margin-right: 5px; font-size: 0.8em;">{s}</span>' for s in news['symbols'][:3]])}
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                        else:
+                            st.info("No recent news found for this symbol.")
                 
-                if 'results' in locals() and 'df_features' in locals():
-                    analytics = PerformanceAnalytics()
-                    
-                    # Calculate metrics for each model
-                    performance_metrics = {}
-                    
-                    for model_name, result in results.items():
-                        if result['predictions'] is not None:
-                            actual_values = df_features['Target_5d_Return'].values[-len(result['predictions']):]
-                            returns = df_features['Returns'].values[-len(result['predictions']):]
-                            
-                            metrics = analytics.calculate_metrics(
-                                actual_values, 
-                                result['predictions'],
-                                returns
-                            )
-                            
-                            performance_metrics[model_name] = metrics
-                    
-                    # Display metrics table
-                    if performance_metrics:
-                        metrics_df = pd.DataFrame(performance_metrics).T
-                        st.dataframe(metrics_df.style.format("{:.4f}"), use_container_width=True)
+                with tab4:
+                    if show_models:
+                        st.subheader("AI Model Details")
                         
-                        # Generate prediction plots
-                        st.subheader("🎯 Prediction Visualization")
+                        col1, col2 = st.columns(2)
                         
-                        for model_name in models_to_train:
-                            if model_name in results and results[model_name]['predictions'] is not None:
-                                fig_pred = analytics.plot_predictions(
-                                    df_features, 
-                                    results[model_name]['predictions'],
-                                    model_name
+                        with col1:
+                            st.markdown("#### 🧠 Model Performance")
+                            for model_name, model_info in st.session_state.predictor.models.items():
+                                accuracy = model_info.get('accuracy', 0)
+                                st.metric(
+                                    f"{model_name.replace('_', ' ').title()}",
+                                    f"{accuracy:.1%}",
+                                    delta="High" if accuracy > 0.6 else "Medium" if accuracy > 0.55 else "Low"
                                 )
-                                
-                                st.plotly_chart(fig_pred, use_container_width=True)
-                    
-                    # Trading recommendations
-                    st.subheader("💡 Trading Recommendations")
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        current_price = df['Close'].iloc[-1]
-                        st.metric("Current Price", f"₹{current_price:.2f}")
-                    
-                    with col2:
-                        if 'Ensemble' in results and results['Ensemble']['predictions'] is not None:
-                            last_pred = results['Ensemble']['predictions'][-1]
-                            signal = "BUY 🚀" if last_pred > 0 else "SELL 🔻" if last_pred < 0 else "HOLD ⏸️"
-                            st.metric("AI Signal", signal)
-                    
-                    with col3:
-                        risk_score = np.random.uniform(0.6, 0.9)  # Placeholder
-                        st.metric("Risk Score", f"{risk_score:.2%}")
-                    
-                    # Risk management
-                    st.info("""
-                    **Risk Management Guidelines:**
-                    - Maximum position size: 10% of portfolio
-                    - Stop loss: 2% below entry
-                    - Take profit: 4% above entry
-                    - Maximum daily loss: 5% of portfolio
-                    """)
-                    
-                    # Model confidence
-                    st.subheader("🤖 Model Confidence")
-                    
-                    confidence_data = {
-                        'XGBoost': np.random.uniform(0.75, 0.85),
-                        'LSTM': np.random.uniform(0.70, 0.80),
-                        'Ensemble': np.random.uniform(0.80, 0.90)
-                    }
-                    
-                    fig_conf = go.Figure(data=[go.Bar(
-                        x=list(confidence_data.keys()),
-                        y=list(confidence_data.values()),
-                        text=[f'{v:.1%}' for v in confidence_data.values()],
-                        textposition='auto',
-                        marker_color=['#00b09b', '#96c93d', '#667eea']
-                    )])
-                    
-                    fig_conf.update_layout(
-                        yaxis=dict(range=[0, 1]),
-                        title="Model Confidence Scores"
-                    )
-                    
-                    st.plotly_chart(fig_conf, use_container_width=True)
+                        
+                        with col2:
+                            st.markdown("#### 📊 Feature Importance")
+                            if st.session_state.predictor.models:
+                                # Get feature importance from XGBoost
+                                xgb_model = st.session_state.predictor.models.get('xgboost')
+                                if xgb_model and 'feature_importance' in xgb_model:
+                                    importance_df = pd.DataFrame(
+                                        list(xgb_model['feature_importance'].items()),
+                                        columns=['Feature', 'Importance']
+                                    ).sort_values('Importance', ascending=False).head(10)
+                                    
+                                    fig = go.Figure(go.Bar(
+                                        x=importance_df['Importance'],
+                                        y=importance_df['Feature'],
+                                        orientation='h',
+                                        marker_color='#FF9933'
+                                    ))
+                                    
+                                    fig.update_layout(
+                                        height=400,
+                                        title="Top 10 Important Features",
+                                        template="plotly_dark"
+                                    )
+                                    
+                                    st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Trading Recommendations
+                        st.markdown("---")
+                        st.subheader("🎯 Trading Recommendations")
+                        
+                        if result['signal'] == 'BUY':
+                            st.success("""
+                            **Recommended Action: BUY**
+                            
+                            📋 **Plan:**
+                            - Entry: Current price or slight dip
+                            - Stop Loss: 3-5% below entry
+                            - Target 1: 5-8% profit
+                            - Target 2: 10-15% profit (if momentum continues)
+                            
+                            ⚡ **Quick Tips:**
+                            - Consider averaging in if price dips
+                            - Monitor news for any negative developments
+                            - Book partial profits at first target
+                            """)
+                        elif result['signal'] == 'SELL':
+                            st.error("""
+                            **Recommended Action: SELL**
+                            
+                            📋 **Plan:**
+                            - Exit long positions
+                            - Consider short positions if experienced
+                            - Wait for better entry points
+                            
+                            ⚡ **Quick Tips:**
+                            - Don't try to catch a falling knife
+                            - Wait for confirmation of trend reversal
+                            - Consider defensive stocks/sectors
+                            """)
+                        else:
+                            st.warning("""
+                            **Recommended Action: HOLD/WAIT**
+                            
+                            📋 **Plan:**
+                            - Maintain existing positions
+                            - Wait for clearer signals
+                            - Monitor key support/resistance levels
+                            
+                            ⚡ **Quick Tips:**
+                            - This is not a signal to buy or sell
+                            - Market is uncertain, be patient
+                            - Consider reducing position size if holding
+                            """)
+                
+                # Disclaimer
+                st.markdown("---")
+                st.warning("""
+                **⚠️ IMPORTANT DISCLAIMER:**
+                
+                This prediction is generated by AI models for educational and informational purposes only. 
+                It should not be considered as financial advice. 
+                
+                - Past performance does not guarantee future results
+                - Always do your own research before trading
+                - Consider consulting with a qualified financial advisor
+                - Never invest money you cannot afford to lose
+                
+                The accuracy of predictions may vary and there's always risk in stock market investments.
+                """)
+                
+            else:
+                st.error("❌ Could not generate prediction. Please check the symbol and try again.")
     
     else:
-        # Welcome screen
+        # Welcome Screen
         st.markdown("""
-        <div style='text-align: center; padding: 50px;'>
-            <h1>🚀 Quantitative Trading AI Platform</h1>
-            <p style='font-size: 1.2rem; color: #888;'>
-                Advanced machine learning for algorithmic trading with comprehensive backtesting
+        <div style='text-align: center; padding: 40px 20px;'>
+            <h2>🎯 AI-Powered Indian Market Predictions</h2>
+            <p style='color: #aaa; font-size: 1.1rem; max-width: 800px; margin: 20px auto;'>
+                Get accurate BUY/SELL signals for Indian stocks, indices, and commodities using 
+                advanced AI models combined with real-time news sentiment and technical analysis.
             </p>
         </div>
         """, unsafe_allow_html=True)
         
+        # Feature Highlights
         col1, col2, col3 = st.columns(3)
         
         with col1:
             st.markdown("""
             <div class='metric-card'>
-                <h3>📈 Multi-Model AI</h3>
-                <p>XGBoost, LSTM, Ensemble models</p>
+                <h3>🤖 AI Prediction</h3>
+                <p>Multiple ML models for accurate direction prediction</p>
             </div>
             """, unsafe_allow_html=True)
         
         with col2:
             st.markdown("""
             <div class='metric-card'>
-                <h3>🔍 Feature Engineering</h3>
-                <p>100+ technical indicators</p>
+                <h3>📰 News Sentiment</h3>
+                <p>Real-time news analysis from Indian sources</p>
             </div>
             """, unsafe_allow_html=True)
         
         with col3:
             st.markdown("""
             <div class='metric-card'>
-                <h3>📊 Full Backtesting</h3>
-                <p>With transaction costs & slippage</p>
+                <h3>📊 Technical Analysis</h3>
+                <p>50+ indicators with automatic signal generation</p>
             </div>
             """, unsafe_allow_html=True)
         
+        # Quick Stats
         st.markdown("---")
+        st.subheader("📈 Today's Market Overview")
         
-        st.write("""
-        ### How to use:
-        1. **Configure** parameters in the sidebar
-        2. **Select** which models to train
-        3. **Click** "Train & Evaluate" to run analysis
-        4. **Review** results across all tabs
+        try:
+            # Get Nifty 50, Sensex, Bank Nifty
+            indices = {
+                "NIFTY 50": "^NSEI",
+                "SENSEX": "^BSESN", 
+                "BANK NIFTY": "^NSEBANK"
+            }
+            
+            cols = st.columns(3)
+            for (name, symbol), col in zip(indices.items(), cols):
+                try:
+                    ticker = yf.Ticker(symbol)
+                    hist = ticker.history(period="1d")
+                    if not hist.empty:
+                        current = hist['Close'].iloc[-1]
+                        prev = ticker.info.get('previousClose', current)
+                        change = ((current - prev) / prev) * 100
+                        
+                        with col:
+                            color = "#4CAF50" if change >= 0 else "#FF5252"
+                            st.metric(
+                                name,
+                                f"₹{current:,.2f}",
+                                f"{change:+.2f}%",
+                                delta_color="normal"
+                            )
+                except:
+                    with col:
+                        st.metric(name, "N/A")
+                        
+        except:
+            pass
         
-        ### Key Features:
-        - **Comprehensive Data Pipeline**: Fetches, cleans, and engineers 100+ features
-        - **Multiple ML Models**: XGBoost, LSTM with Attention, Ensemble methods
-        - **Proper Validation**: Time-series cross-validation to prevent look-ahead bias
-        - **Full Backtesting**: Realistic simulation with commissions and slippage
-        - **Risk Management**: Built-in position sizing and stop-loss mechanisms
-        - **Performance Analytics**: Sharpe ratio, max drawdown, win rate, and more
+        # How to Use
+        st.markdown("---")
+        st.subheader("🚀 How to Use")
         
-        ⚠️ **Disclaimer**: This is for educational purposes. Past performance doesn't guarantee future results.
-        Always do your own research before trading.
+        st.markdown("""
+        1. **Select** your asset type from the sidebar (Stocks, Indices, or Commodities)
+        2. **Choose** a specific symbol from the dropdown or enter custom symbol
+        3. **Set** your preferred analysis period
+        4. **Click** the "PREDICT NOW" button
+        5. **Review** the AI prediction with confidence level
+        6. **Analyze** detailed charts, technicals, and news
+        
+        ### 📋 Supported Assets:
+        - **Stocks**: All Nifty 50 companies
+        - **Indices**: Nifty 50, Sensex, Bank Nifty, Sectoral indices
+        - **Commodities**: Gold, Silver, Crude Oil, Metals
+        - **Custom**: Any Indian stock with .NS suffix
+        
+        ### ⚡ Pro Tips:
+        - Use longer periods (1y+) for more accurate predictions
+        - Check both technical signals and news sentiment
+        - Consider the confidence level before making decisions
+        - Always use proper risk management
+        
+        ### 📚 Features Included:
+        - ✅ AI Prediction with multiple models
+        - ✅ Real-time Indian market news
+        - ✅ Technical analysis with 50+ indicators  
+        - ✅ Sentiment analysis
+        - ✅ Price charts with support/resistance
+        - ✅ Trading recommendations
+        - ✅ Model accuracy metrics
         """)
+        
+        # Quick Start Examples
+        st.markdown("---")
+        st.subheader("⚡ Quick Predictions")
+        
+        quick_cols = st.columns(4)
+        quick_symbols = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "^NSEI"]
+        
+        for idx, (col, sym) in enumerate(zip(quick_cols, quick_symbols)):
+            with col:
+                if st.button(f"Predict {sym}", use_container_width=True):
+                    st.session_state.quick_symbol = sym
+                    st.rerun()
 
 if __name__ == "__main__":
     main()

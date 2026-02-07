@@ -53,6 +53,83 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --------------------------
+# 4. UTILITIES
+
+# Define the sources you want to track
+RSS_FEEDS = {
+    "Moneycontrol": "https://www.moneycontrol.com/rss/economy.xml",
+    "Moneycontrol Markets": "https://www.moneycontrol.com/rss/marketreports.xml",
+    "Economic Times": "https://economictimes.indiatimes.com/markets/stocks/rssfeeds/2146842.cms",
+    "NDTV Profit": "https://feeds.feedburner.com/ndtvprofit-latest",
+    "CNBC-TV18": "https://www.cnbctv18.com/commonfeeds/v1/cne/rss/stock-market.xml",
+    "LiveMint": "https://www.livemint.com/rss/markets",
+    "Business Standard": "https://www.business-standard.com/rss/finance-103.rss"
+}
+
+def is_market_open(ticker):
+    utc_now = datetime.now(pytz.utc)
+    ist_now = utc_now.astimezone(pytz.timezone('Asia/Kolkata'))
+    if ist_now.weekday() >= 5: return False, "Weekend"
+    if dt_time(9, 15) <= ist_now.time() <= dt_time(15, 30): return True, "Open"
+    return False, "Closed"
+
+def get_currency(ticker):
+    return "₹" if ticker.endswith(".NS") else "$"
+
+def get_live_data(symbol):
+    try:
+        stock = yf.Ticker(symbol)
+        price = stock.fast_info.last_price
+        prev = stock.fast_info.previous_close
+        if price is None or prev is None: return 0.0, 0.0, 0.0
+        return price, price - prev, (price - prev) / prev * 100
+    except:
+        return 0.0, 0.0, 0.0
+
+# UPDATED: Fetch news from multiple specific sources
+@st.cache_data(ttl=300)  # Cache clears every 5 minutes to get fresh news
+def get_news(query="Stock Market", count=10):
+    items = []
+    
+    # 1. Fetch from specific RSS feeds
+    for source_name, url in RSS_FEEDS.items():
+        try:
+            feed = feedparser.parse(url)
+            for e in feed.entries[:3]: # Take top 3 from each source to mix them up
+                # Calculate sentiment
+                blob = TextBlob(e.title)
+                if blob.sentiment.polarity > 0.05:
+                    sent = "🟢 Bullish"
+                elif blob.sentiment.polarity < -0.05:
+                    sent = "🔴 Bearish" 
+                else:
+                    sent = "⚪ Neutral"
+                
+                # Handle different date formats
+                if 'published_parsed' in e:
+                    ts = time.mktime(e.published_parsed)
+                    date_str = time.strftime('%d %b %H:%M', e.published_parsed)
+                else:
+                    ts = time.time() # Fallback to now
+                    date_str = "Just Now"
+
+                items.append({
+                    'title': e.title,
+                    'link': e.link,
+                    'source': source_name, # Use our clean name (e.g., "CNBC-TV18")
+                    'date': date_str,
+                    'ts': ts,
+                    'sent': sent
+                })
+        except Exception:
+            continue
+
+    # 2. Sort all news by latest time (Newest first)
+    sorted_news = sorted(items, key=lambda x: x['ts'], reverse=True)
+    
+    return sorted_news[:count]
+
 # Optional Lottie loader
 try:
     from streamlit_lottie import st_lottie

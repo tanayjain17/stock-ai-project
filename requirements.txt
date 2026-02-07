@@ -4,11 +4,10 @@ pandas
 numpy
 plotly
 scikit-learn
-tensorflow
+tensorflow-cpu
 joblib
 gdown
 feedparser
 textblob
-pytz
+requests
 streamlit-autorefresh
-streamlit-lottie

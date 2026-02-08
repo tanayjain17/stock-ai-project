@@ -3,6 +3,10 @@ yfinance
 pandas
 numpy
 plotly
-ta
-xgboost
-joblib
+scikit-learn
+tensorflow-cpu
+requests
+feedparser
+textblob
+streamlit-autorefresh
+beautifulsoup4

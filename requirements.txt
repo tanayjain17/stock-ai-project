@@ -10,3 +10,4 @@ feedparser
 textblob
 streamlit-autorefresh
 beautifulsoup4
+nltk

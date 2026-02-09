@@ -13,8 +13,6 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 
 # --------------------------
 # 0. INITIAL SETUP
-# --------------------------
-# Download VADER lexicon for sentiment analysis if not present
 try:
     nltk.data.find('sentiment/vader_lexicon.zip')
 except LookupError:
@@ -23,7 +21,7 @@ except LookupError:
 sia = SentimentIntensityAnalyzer()
 
 st.set_page_config(
-    page_title="Quant Market Dashboard V13", 
+    page_title="Pro Market Dashboard V14", 
     layout="wide", 
     page_icon="🚀",
     initial_sidebar_state="collapsed"
@@ -31,9 +29,8 @@ st.set_page_config(
 
 # --------------------------
 # 1. SESSION STATE
-# --------------------------
 if 'page' not in st.session_state: st.session_state.page = "🏠 Market Dashboard"
-if 'selected_ticker' not in st.session_state: st.session_state.selected_ticker = "FORCEMOT.NS"
+if 'selected_ticker' not in st.session_state: st.session_state.selected_ticker = "ZOMATO.NS"
 
 def navigate_to(page, ticker=None):
     st.session_state.page = page
@@ -41,13 +38,10 @@ def navigate_to(page, ticker=None):
     st.rerun()
 
 # --------------------------
-# 2. MODERN UI CSS
-# --------------------------
+# 2. CSS STYLING
 st.markdown("""
 <style>
     .stApp { background-color: #0f1115; font-family: 'Inter', sans-serif; }
-    
-    /* CARDS */
     .fun-card {
         background: rgba(30, 34, 45, 0.6); 
         backdrop-filter: blur(10px);
@@ -58,24 +52,10 @@ st.markdown("""
         transition: 0.3s;
     }
     .fun-card:hover { transform: translateY(-3px); border-color: #00d09c; }
-    
-    /* SIGNAL BOX */
-    .signal-box {
-        background: #1e2330;
-        border-radius: 12px;
-        padding: 20px;
-        margin-top: 15px;
-        border: 1px solid #333;
-    }
-
-    /* NEWS */
+    .signal-box { background: #1e2330; border-radius: 12px; padding: 20px; margin-top: 15px; border: 1px solid #333; }
     .news-box { background: #161920; padding: 12px; border-radius: 10px; margin-bottom: 8px; border-left: 3px solid #4c8bf5; }
-    
-    /* BUTTONS */
     div.stButton > button { width: 100%; background: transparent; border: none; color: white; text-align: left; padding: 0; }
     div.stButton > button:hover { color: #00d09c; background: transparent; }
-    
-    /* METRICS */
     .metric-container { background: #1e2330; padding: 10px; border-radius: 8px; border: 1px solid #333; text-align: center; margin-bottom: 5px; }
     .metric-label { font-size: 10px; color: #aaa; text-transform: uppercase; }
     .metric-value { font-size: 14px; font-weight: bold; color: #fff; }
@@ -83,47 +63,28 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --------------------------
-# 3. ROBUST DATA ENGINES
-# --------------------------
-
+# 3. DATA ENGINES
 def robust_yf_download(ticker, period):
     try:
-        # Smart Interval: 1m for short term, 1d for long term
-        interval = "1m" if period in ["1d","5d"] else "1d"
-        if period == "1mo": interval = "30m"
-        
+        interval = "1d" # Force daily for reliability on indicators
         df = yf.download(ticker, period=period, interval=interval, progress=False)
-        
-        # Flatten MultiIndex Columns (Fix for yfinance update)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-            
-        # Fallback if intraday fails
-        if df.empty and interval != "1d":
-            df = yf.download(ticker, period=period, interval="1d", progress=False)
-            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-            
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         return df if not df.empty else None
     except: return None
 
 @st.cache_data(ttl=3600)
 def get_fundamentals(ticker):
-    # 1. Yahoo Finance
     try:
         info = yf.Ticker(ticker).info
         if info.get('trailingPE') is not None:
             return {
                 "Market Cap": info.get("marketCap", 0),
                 "P/E": info.get("trailingPE", 0),
-                "P/B": info.get("priceToBook", 0),
                 "ROE": (info.get("returnOnEquity", 0) or 0) * 100,
                 "Book Value": info.get("bookValue", 0),
-                "52W High": info.get("fiftyTwoWeekHigh", 0),
                 "Source": "Yahoo"
             }
     except: pass
-    
-    # 2. Screener.in Fallback (For Indian Stocks)
     if ".NS" in ticker:
         try:
             url = f"https://www.screener.in/company/{ticker.replace('.NS','')}/"
@@ -139,14 +100,12 @@ def get_fundamentals(ticker):
                     if "Stock P/E" in name: d["P/E"] = float(val)
                     if "ROE" in name: d["ROE"] = float(val)
                     if "Book Value" in name: d["Book Value"] = float(val)
-                    if "High / Low" in name: d["52W High"] = float(val.split('/')[0].strip())
                 d["Source"] = "Screener"
                 return d
         except: pass
     return None
 
 def get_news_sentiment_vader(ticker):
-    """Fetches news and scores it using VADER"""
     try:
         clean = ticker.replace(".NS","").replace(".BO","")
         url = f"https://news.google.com/rss/search?q={clean}+stock+news&hl=en-IN&gl=IN&ceid=IN:en"
@@ -170,109 +129,93 @@ def get_nse_chain(symbol="NIFTY"):
     except: return None
 
 # --------------------------
-# 4. ADVANCED QUANT LOGIC (YOUR NEW CODE INTEGRATED)
-# --------------------------
-
-def calculate_advanced_features(df):
+# 4. AGGRESSIVE QUANT LOGIC (The Fix)
+def calculate_features(df):
     df = df.copy()
-    
-    # Moving Averages
+    # Indicators
     df['SMA_20'] = df['Close'].rolling(20).mean()
     df['SMA_50'] = df['Close'].rolling(50).mean()
-    
-    # RSI (Wilder's Smoothing)
-    delta = df['Close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.ewm(span=14, adjust=False).mean()
-    avg_loss = loss.ewm(span=14, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # MACD
-    ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
-    ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = ema_12 - ema_26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['EMA_12'] = df['Close'].ewm(span=12).mean()
+    df['EMA_26'] = df['Close'].ewm(span=26).mean()
+    df['MACD'] = df['EMA_12'] - df['EMA_26']
+    df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
     df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
     
-    # Volume & ATR
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).ewm(span=14).mean()
+    loss = -delta.where(delta < 0, 0).ewm(span=14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
     df['ATR'] = (df['High'] - df['Low']).rolling(14).mean()
     df['Vol_SMA'] = df['Volume'].rolling(20).mean()
-    df['Vol_Ratio'] = df['Volume'] / df['Vol_SMA'].replace(0, np.nan)
-    
     df.dropna(inplace=True)
     return df
 
 def run_quant_prediction(ticker):
-    # 1. Fetch Data
+    # Fetch 2Y data to ensure indicators settle
     df = robust_yf_download(ticker, "2y")
     if df is None or len(df) < 50: return None
     
-    df = calculate_advanced_features(df)
+    df = calculate_features(df)
     
-    # 2. Key Metrics
-    curr_price = df['Close'].iloc[-1]
+    curr = df['Close'].iloc[-1]
     rsi = df['RSI'].iloc[-1]
     macd_hist = df['MACD_Hist'].iloc[-1]
-    vol_ratio = df['Vol_Ratio'].iloc[-1]
+    sma_20 = df['SMA_20'].iloc[-1]
     sma_50 = df['SMA_50'].iloc[-1]
+    vol = df['Volume'].iloc[-1]
+    vol_sma = df['Vol_SMA'].iloc[-1]
     atr = df['ATR'].iloc[-1]
     
-    # 3. Fundamentals & Sentiment
-    fund = get_fundamentals(ticker)
     sent_score = get_news_sentiment_vader(ticker)
+    fund = get_fundamentals(ticker)
     
-    # 4. LOGIC ENGINE
-    verdict = "HOLD / NEUTRAL"
+    # --- AGGRESSIVE LOGIC ---
+    verdict = "HOLD"
     color = "#888888"
-    reason = "No clear directional signal."
+    reason = "Market consolidating."
     
-    # Signal A: MOMENTUM BREAKOUT (Force Motors Style)
-    if vol_ratio > 1.5 and curr_price > sma_50 and macd_hist > 0:
+    # 1. STRONG BUY: Momentum + Volume (Force Motors Style)
+    if (vol > 1.2 * vol_sma) and (curr > sma_20) and (macd_hist > 0):
         verdict = "MOMENTUM BUY 🚀"
         color = "#00d09c"
-        reason = "Volume Spike (>1.5x) + Price > 50SMA + MACD Bullish."
-    
-    # Signal B: OVERSOLD REVERSAL
-    elif rsi < 30 and macd_hist > 0:
-        verdict = "REVERSAL BUY 🟢"
-        color = "#00d09c"
-        reason = "RSI Oversold (<30) + MACD turning positive."
+        reason = "Volume Spike + Bullish MACD"
         
-    # Signal C: TREND CONTINUATION
-    elif curr_price > sma_50 and 50 < rsi < 75 and macd_hist > 0 and sent_score >= 0:
+    # 2. DIP BUY: RSI Oversold Reversal
+    elif rsi < 35:
+        verdict = "DIP BUY 🟢"
+        color = "#00d09c"
+        reason = "Oversold RSI (<35) - Bounce likely"
+        
+    # 3. TREND BUY: Classic Uptrend
+    elif (curr > sma_50) and (macd_hist > -0.5) and (rsi > 40): # Relaxed MACD condition
         verdict = "TREND BUY 📈"
         color = "#00d09c"
-        reason = "Uptrend verified by MACD & Sentiment."
+        reason = "Above 50SMA with healthy RSI"
         
-    # Signal D: OVERBOUGHT / WEAKNESS
-    elif rsi > 75 and macd_hist < 0:
-        verdict = "SELL (Overbought) 🔻"
+    # 4. SELL: Breakdown
+    elif (curr < sma_50) and (macd_hist < 0):
+        verdict = "SELL (WEAK) 🔻"
         color = "#ff4b4b"
-        reason = "RSI Overbought (>75) + MACD weakening."
+        reason = "Below 50SMA + Negative Momentum"
         
-    # Signal E: DOWNTREND
-    elif curr_price < sma_50 and macd_hist < 0:
-        verdict = "SELL (Downtrend) 📉"
+    # 5. PROFIT BOOK: Extreme Overbought
+    elif rsi > 80:
+        verdict = "BOOK PROFIT 💰"
         color = "#ff4b4b"
-        reason = "Price < 50SMA + MACD Negative."
+        reason = "RSI Extremely High (>80)"
 
-    # 5. Targets
-    sl = curr_price - (2.0 * atr) if "BUY" in verdict else curr_price + (1.5 * atr)
-    tgt = curr_price + (3.0 * atr) if "BUY" in verdict else curr_price - (2.0 * atr)
+    # Targets (Tighter Stops)
+    sl = curr - (1.5 * atr) if "BUY" in verdict else curr + (1.5 * atr)
+    tgt = curr + (2.5 * atr) if "BUY" in verdict else curr - (2.5 * atr)
     
-    return {
-        'verdict': verdict, 'color': color, 'reason': reason,
-        'sl': sl, 'tgt': tgt, 'curr': curr_price, 
-        'fund': fund, 'sent': sent_score
-    }
+    return {'verdict':verdict, 'color':color, 'reason':reason, 'sl':sl, 'tgt':tgt, 'curr':curr, 'fund':fund, 'sent':sent_score}
 
 # --------------------------
 # 5. APP STRUCTURE
-# --------------------------
 INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
-SCANNER_POOL = ["FORCEMOT.NS", "RELIANCE.NS", "ZOMATO.NS", "TATASTEEL.NS", "HDFCBANK.NS", "INFY.NS", "TCS.NS", "ITC.NS"] 
+SCANNER_POOL = ["FORCEMOT.NS","POWERINDIA.NS" , "RELIANCE.NS", "ZOMATO.NS", "TATASTEEL.NS", "HDFCBANK.NS", "INFY.NS", "TCS.NS", "ITC.NS"] 
 
 st.sidebar.title("🚀 Menu")
 nav = st.sidebar.radio("Go to", ["🏠 Market Dashboard", "📈 Stock Analyzer", "📊 F/O Dashboard", "⭐ Top 5 AI Picks"], index=["🏠 Market Dashboard", "📈 Stock Analyzer", "📊 F/O Dashboard", "⭐ Top 5 AI Picks"].index(st.session_state.page))
@@ -313,18 +256,17 @@ elif st.session_state.page == "📈 Stock Analyzer":
     sym = c2.text_input("Ticker", raw)
     full = f"{sym.upper().strip()}.NS" if ex == "NSE" else f"{sym.upper().strip()}.BO"
     
-    with st.spinner(f"🔍 Running VADER Sentiment & Technicals on {full}..."):
+    with st.spinner(f"🔍 Calculating {full}..."):
         data = run_quant_prediction(full)
     
     if data:
-        # 1. SIGNAL CARD
         st.markdown(f"""
         <div class="signal-box" style="border-left: 6px solid {data['color']};">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <h1 style="color:{data['color']}; margin:0;">{data['verdict']}</h1>
                 <h2 style="margin:0;">₹{data['curr']:,.2f}</h2>
             </div>
-            <p style="color:#ddd; margin-top:5px;"><i>Reason: {data['reason']}</i></p>
+            <p style="color:#ddd; margin-top:5px;"><i>Logic: {data['reason']}</i></p>
             <hr style="border-color:#333;">
             <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
                 <div><span>🛑 Stop Loss</span><h3 style="color:#ff4b4b;">₹{data['sl']:.2f}</h3></div>
@@ -334,7 +276,6 @@ elif st.session_state.page == "📈 Stock Analyzer":
         </div>
         """, unsafe_allow_html=True)
         
-        # 2. FUNDAMENTALS
         st.markdown("#### 📊 Vital Stats")
         fd = data['fund']
         if fd:
@@ -343,9 +284,8 @@ elif st.session_state.page == "📈 Stock Analyzer":
             f2.markdown(f"<div class='metric-container'><div class='metric-label'>P/E Ratio</div><div class='metric-value'>{fd['P/E']:.2f}</div></div>", unsafe_allow_html=True)
             f3.markdown(f"<div class='metric-container'><div class='metric-label'>ROE</div><div class='metric-value'>{fd['ROE']:.1f}%</div></div>", unsafe_allow_html=True)
             f4.markdown(f"<div class='metric-container'><div class='metric-label'>Book Val</div><div class='metric-value'>₹{fd['Book Value']:.2f}</div></div>", unsafe_allow_html=True)
-        else: st.warning("Fundamentals unavailable via API.")
+        else: st.warning("Fundamentals unavailable.")
 
-        # 3. CHART
         df_chart = robust_yf_download(full, "1y")
         fig = go.Figure(data=[go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'])])
         fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=500)

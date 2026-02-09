@@ -1,337 +1,143 @@
+# ---------- IMPORTS ----------
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import requests
 import feedparser
-from bs4 import BeautifulSoup
-import streamlit.components.v1 as components
-from streamlit_autorefresh import st_autorefresh
-import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
+from datetime import datetime
 
-# --------------------------
-# 0. INITIAL SETUP
-try:
-    nltk.data.find('sentiment/vader_lexicon.zip')
-except LookupError:
-    nltk.download('vader_lexicon')
+st.set_page_config("Pro Market Dashboard", layout="wide", page_icon="🚀")
 
-sia = SentimentIntensityAnalyzer()
+# ---------- SAFE YF ----------
+@st.cache_data(ttl=300)
+def yf_safe(ticker, period="1y"):
+    df = yf.download(ticker, period=period, interval="1d", progress=False)
+    if df.empty:
+        return None
 
-st.set_page_config(
-    page_title="Pro Market Dashboard V14", 
-    layout="wide", 
-    page_icon="🚀",
-    initial_sidebar_state="collapsed"
-)
-
-# --------------------------
-# 1. SESSION STATE
-if 'page' not in st.session_state: st.session_state.page = "🏠 Market Dashboard"
-if 'selected_ticker' not in st.session_state: st.session_state.selected_ticker = "ZOMATO.NS"
-
-def navigate_to(page, ticker=None):
-    st.session_state.page = page
-    if ticker: st.session_state.selected_ticker = ticker
-    st.rerun()
-
-# --------------------------
-# 2. CSS STYLING
-st.markdown("""
-<style>
-    .stApp { background-color: #0f1115; font-family: 'Inter', sans-serif; }
-    .fun-card {
-        background: rgba(30, 34, 45, 0.6); 
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 16px; 
-        padding: 15px; 
-        cursor: pointer; 
-        transition: 0.3s;
-    }
-    .fun-card:hover { transform: translateY(-3px); border-color: #00d09c; }
-    .signal-box { background: #1e2330; border-radius: 12px; padding: 20px; margin-top: 15px; border: 1px solid #333; }
-    .news-box { background: #161920; padding: 12px; border-radius: 10px; margin-bottom: 8px; border-left: 3px solid #4c8bf5; }
-    div.stButton > button { width: 100%; background: transparent; border: none; color: white; text-align: left; padding: 0; }
-    div.stButton > button:hover { color: #00d09c; background: transparent; }
-    .metric-container { background: #1e2330; padding: 10px; border-radius: 8px; border: 1px solid #333; text-align: center; margin-bottom: 5px; }
-    .metric-label { font-size: 10px; color: #aaa; text-transform: uppercase; }
-    .metric-value { font-size: 14px; font-weight: bold; color: #fff; }
-</style>
-""", unsafe_allow_html=True)
-
-# --------------------------
-# 3. DATA ENGINES
-def robust_yf_download(ticker, period):
-    try:
-        interval = "1d" # Force daily for reliability on indicators
-        df = yf.download(ticker, period=period, interval=interval, progress=False)
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        return df if not df.empty else None
-    except: return None
-
-@st.cache_data(ttl=3600)
-def get_fundamentals(ticker):
-    try:
-        info = yf.Ticker(ticker).info
-        if info.get('trailingPE') is not None:
-            return {
-                "Market Cap": info.get("marketCap", 0),
-                "P/E": info.get("trailingPE", 0),
-                "ROE": (info.get("returnOnEquity", 0) or 0) * 100,
-                "Book Value": info.get("bookValue", 0),
-                "Source": "Yahoo"
-            }
-    except: pass
-    if ".NS" in ticker:
-        try:
-            url = f"https://www.screener.in/company/{ticker.replace('.NS','')}/"
-            r = requests.get(url)
-            if r.status_code == 200:
-                soup = BeautifulSoup(r.text, 'html.parser')
-                lis = soup.find('ul', {'id': 'top-ratios'}).find_all('li')
-                d = {}
-                for li in lis:
-                    name = li.find('span', {'class':'name'}).text.strip()
-                    val = li.find('span', {'class':'number'}).text.replace(',','')
-                    if "Market Cap" in name: d["Market Cap"] = float(val)*10000000
-                    if "Stock P/E" in name: d["P/E"] = float(val)
-                    if "ROE" in name: d["ROE"] = float(val)
-                    if "Book Value" in name: d["Book Value"] = float(val)
-                d["Source"] = "Screener"
-                return d
-        except: pass
-    return None
-
-def get_news_sentiment_vader(ticker):
-    try:
-        clean = ticker.replace(".NS","").replace(".BO","")
-        url = f"https://news.google.com/rss/search?q={clean}+stock+news&hl=en-IN&gl=IN&ceid=IN:en"
-        feed = feedparser.parse(url)
-        scores = []
-        for e in feed.entries[:5]:
-            score = sia.polarity_scores(e.title)['compound']
-            scores.append(score)
-        return np.mean(scores) if scores else 0
-    except: return 0
-
-@st.cache_data(ttl=60)
-def get_nse_chain(symbol="NIFTY"):
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        session = requests.Session()
-        session.get("https://www.nseindia.com", headers=headers, timeout=5)
-        clean_sym = symbol.upper().replace(".NS","").replace("^","")
-        url = f"https://www.nseindia.com/api/option-chain-indices?symbol={clean_sym}" if clean_sym in ["NIFTY","BANKNIFTY"] else f"https://www.nseindia.com/api/option-chain-equities?symbol={clean_sym}"
-        return session.get(url, headers=headers, timeout=5).json()
-    except: return None
-
-# --------------------------
-# 4. AGGRESSIVE QUANT LOGIC (The Fix)
-def calculate_features(df):
-    df = df.copy()
-    # Indicators
-    df['SMA_20'] = df['Close'].rolling(20).mean()
-    df['SMA_50'] = df['Close'].rolling(50).mean()
-    df['EMA_12'] = df['Close'].ewm(span=12).mean()
-    df['EMA_26'] = df['Close'].ewm(span=26).mean()
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
-    df['MACD_Signal'] = df['MACD'].ewm(span=9).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    delta = df['Close'].diff()
-    gain = delta.where(delta > 0, 0).ewm(span=14).mean()
-    loss = -delta.where(delta < 0, 0).ewm(span=14).mean()
-    rs = gain / loss.replace(0, np.nan)
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    df['ATR'] = (df['High'] - df['Low']).rolling(14).mean()
-    df['Vol_SMA'] = df['Volume'].rolling(20).mean()
-    df.dropna(inplace=True)
+    # FIX FOR CONTINUOUS CHART
+    df = df.asfreq("D")
+    df[['Open','High','Low','Close','Volume']] = df[['Open','High','Low','Close','Volume']].ffill()
     return df
 
-def run_quant_prediction(ticker):
-    # Fetch 2Y data to ensure indicators settle
-    df = robust_yf_download(ticker, "2y")
-    if df is None or len(df) < 50: return None
-    
-    df = calculate_features(df)
-    
-    curr = df['Close'].iloc[-1]
-    rsi = df['RSI'].iloc[-1]
-    macd_hist = df['MACD_Hist'].iloc[-1]
-    sma_20 = df['SMA_20'].iloc[-1]
-    sma_50 = df['SMA_50'].iloc[-1]
-    vol = df['Volume'].iloc[-1]
-    vol_sma = df['Vol_SMA'].iloc[-1]
-    atr = df['ATR'].iloc[-1]
-    
-    sent_score = get_news_sentiment_vader(ticker)
-    fund = get_fundamentals(ticker)
-    
-    # --- AGGRESSIVE LOGIC ---
+# ---------- INDICATORS ----------
+def add_indicators(df):
+    df['SMA20'] = df['Close'].rolling(20).mean()
+    df['SMA50'] = df['Close'].rolling(50).mean()
+
+    delta = df['Close'].diff()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
+    loss = -delta.where(delta < 0, 0).rolling(14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100/(1+rs))
+
+    df['ATR'] = (df['High'] - df['Low']).rolling(14).mean()
+    df['VolAvg'] = df['Volume'].rolling(20).mean()
+    return df.dropna()
+
+# ---------- QUANT LOGIC ----------
+def quant_signal(df):
+    c = df.iloc[-1]
     verdict = "HOLD"
-    color = "#888888"
-    reason = "Market consolidating."
-    
-    # 1. STRONG BUY: Momentum + Volume (Force Motors Style)
-    if (vol > 1.2 * vol_sma) and (curr > sma_20) and (macd_hist > 0):
-        verdict = "MOMENTUM BUY 🚀"
-        color = "#00d09c"
-        reason = "Volume Spike + Bullish MACD"
-        
-    # 2. DIP BUY: RSI Oversold Reversal
-    elif rsi < 35:
-        verdict = "DIP BUY 🟢"
-        color = "#00d09c"
-        reason = "Oversold RSI (<35) - Bounce likely"
-        
-    # 3. TREND BUY: Classic Uptrend
-    elif (curr > sma_50) and (macd_hist > -0.5) and (rsi > 40): # Relaxed MACD condition
-        verdict = "TREND BUY 📈"
-        color = "#00d09c"
-        reason = "Above 50SMA with healthy RSI"
-        
-    # 4. SELL: Breakdown
-    elif (curr < sma_50) and (macd_hist < 0):
-        verdict = "SELL (WEAK) 🔻"
-        color = "#ff4b4b"
-        reason = "Below 50SMA + Negative Momentum"
-        
-    # 5. PROFIT BOOK: Extreme Overbought
-    elif rsi > 80:
-        verdict = "BOOK PROFIT 💰"
-        color = "#ff4b4b"
-        reason = "RSI Extremely High (>80)"
+    color = "gray"
 
-    # Targets (Tighter Stops)
-    sl = curr - (1.5 * atr) if "BUY" in verdict else curr + (1.5 * atr)
-    tgt = curr + (2.5 * atr) if "BUY" in verdict else curr - (2.5 * atr)
-    
-    return {'verdict':verdict, 'color':color, 'reason':reason, 'sl':sl, 'tgt':tgt, 'curr':curr, 'fund':fund, 'sent':sent_score}
+    if c.Volume > 1.3*c.VolAvg and c.Close > c.SMA20:
+        verdict, color = "MOMENTUM BUY 🚀", "#00d09c"
+    elif c.RSI < 35:
+        verdict, color = "DIP BUY 🟢", "#00d09c"
+    elif c.Close > c.SMA50 and c.RSI > 45:
+        verdict, color = "TREND BUY 📈", "#00d09c"
+    elif c.Close < c.SMA50:
+        verdict, color = "SELL 🔻", "#ff4b4b"
 
-# --------------------------
-# 5. APP STRUCTURE
-INDICES = {"NIFTY 50": "^NSEI", "SENSEX": "^BSESN", "BANK NIFTY": "^NSEBANK"}
-SCANNER_POOL = ["FORCEMOT.NS","POWERINDIA.NS" , "RELIANCE.NS", "ZOMATO.NS", "TATASTEEL.NS", "HDFCBANK.NS", "INFY.NS", "TCS.NS", "ITC.NS"] 
+    sl = c.Close - 1.5*c.ATR
+    tgt = c.Close + 2.5*c.ATR
 
-st.sidebar.title("🚀 Menu")
-nav = st.sidebar.radio("Go to", ["🏠 Market Dashboard", "📈 Stock Analyzer", "📊 F/O Dashboard", "⭐ Top 5 AI Picks"], index=["🏠 Market Dashboard", "📈 Stock Analyzer", "📊 F/O Dashboard", "⭐ Top 5 AI Picks"].index(st.session_state.page))
-if nav != st.session_state.page: navigate_to(nav)
+    return verdict, color, sl, tgt
 
-if st.session_state.page != "⭐ Top 5 AI Picks": st_autorefresh(interval=30000, key="refresh")
+# ---------- CANDLE CHART ----------
+def candle_chart(df):
+    fig = go.Figure(go.Candlestick(
+        x=df.index,
+        open=df['Open'],
+        high=df['High'],
+        low=df['Low'],
+        close=df['Close']
+    ))
+    fig.add_scatter(x=df.index, y=df['SMA20'], name="SMA20")
+    fig.add_scatter(x=df.index, y=df['SMA50'], name="SMA50")
+    fig.update_layout(template="plotly_dark", height=550)
+    st.plotly_chart(fig, use_container_width=True)
 
-# --- DASHBOARD ---
-if st.session_state.page == "🏠 Market Dashboard":
-    st.markdown("### 📊 Market Overview")
-    c1, c2, c3 = st.columns(3)
-    for (name, sym), col in zip(INDICES.items(), [c1, c2, c3]):
-        df = robust_yf_download(sym, "5d")
-        if df is not None:
-            curr = df['Close'].iloc[-1]
-            chg = curr - df['Close'].iloc[-2]
-            pct = (chg/df['Close'].iloc[-2])*100
-            clr = "#00d09c" if chg >= 0 else "#ff4b4b"
-            with col:
-                st.markdown(f"""<div class="fun-card" style="border-top:3px solid {clr}"><div style="color:#aaa; font-size:12px;">{name}</div><div style="font-size:22px; font-weight:bold;">₹{curr:,.2f}</div><div style="color:{clr}; font-weight:bold;">{chg:+.2f} ({pct:+.2f}%)</div></div>""", unsafe_allow_html=True)
-                if st.button(f"Analyze {name}", key=name): navigate_to("📈 Stock Analyzer", sym)
+# ---------- ASSETS ----------
+ASSETS = {
+    "NIFTY 50": "^NSEI",
+    "BANK NIFTY": "^NSEBANK",
+    "GOLD ETF": "GOLDBEES.NS",
+    "SILVER ETF": "SILVERBEES.NS",
+    "NIFTY ETF": "NIFTYBEES.NS",
+    "BANK ETF": "BANKBEES.NS",
+    "CRUDE OIL": "CL=F",
+    "GOLD FUT": "GC=F",
+    "SILVER FUT": "SI=F",
+}
 
-    st.markdown("### 📰 Latest News")
-    try:
-        d = feedparser.parse("https://www.moneycontrol.com/rss/marketreports.xml")
-        for e in d.entries[:4]:
-            st.markdown(f"<div class='news-box'><a href='{e.link}' target='_blank' style='color:white;text-decoration:none'>{e.title}</a></div>", unsafe_allow_html=True)
-    except: st.error("News unavailable")
+# ---------- DASHBOARD ----------
+st.title("🚀 Pro Market Dashboard")
 
-# --- STOCK ANALYZER (QUANT) ---
-elif st.session_state.page == "📈 Stock Analyzer":
-    st.markdown("### 📈 Quant Analyzer")
-    if st.button("← Back"): navigate_to("🏠 Market Dashboard")
-    
-    c1, c2 = st.columns([1,3])
-    ex = c1.selectbox("Market", ["NSE","BSE"])
-    raw = st.session_state.selected_ticker.replace(".NS","").replace(".BO","")
-    sym = c2.text_input("Ticker", raw)
-    full = f"{sym.upper().strip()}.NS" if ex == "NSE" else f"{sym.upper().strip()}.BO"
-    
-    with st.spinner(f"🔍 Calculating {full}..."):
-        data = run_quant_prediction(full)
-    
-    if data:
-        st.markdown(f"""
-        <div class="signal-box" style="border-left: 6px solid {data['color']};">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h1 style="color:{data['color']}; margin:0;">{data['verdict']}</h1>
-                <h2 style="margin:0;">₹{data['curr']:,.2f}</h2>
-            </div>
-            <p style="color:#ddd; margin-top:5px;"><i>Logic: {data['reason']}</i></p>
-            <hr style="border-color:#333;">
-            <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
-                <div><span>🛑 Stop Loss</span><h3 style="color:#ff4b4b;">₹{data['sl']:.2f}</h3></div>
-                <div><span>🎯 Target</span><h3 style="color:#00d09c;">₹{data['tgt']:.2f}</h3></div>
-                <div><span>📰 Sentiment</span><h3>{data['sent']:.2f}</h3></div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("#### 📊 Vital Stats")
-        fd = data['fund']
-        if fd:
-            f1, f2, f3, f4 = st.columns(4)
-            f1.markdown(f"<div class='metric-container'><div class='metric-label'>Market Cap</div><div class='metric-value'>₹{fd['Market Cap']/10000000:.0f} Cr</div></div>", unsafe_allow_html=True)
-            f2.markdown(f"<div class='metric-container'><div class='metric-label'>P/E Ratio</div><div class='metric-value'>{fd['P/E']:.2f}</div></div>", unsafe_allow_html=True)
-            f3.markdown(f"<div class='metric-container'><div class='metric-label'>ROE</div><div class='metric-value'>{fd['ROE']:.1f}%</div></div>", unsafe_allow_html=True)
-            f4.markdown(f"<div class='metric-container'><div class='metric-label'>Book Val</div><div class='metric-value'>₹{fd['Book Value']:.2f}</div></div>", unsafe_allow_html=True)
-        else: st.warning("Fundamentals unavailable.")
+cols = st.columns(len(ASSETS))
+for (name, sym), col in zip(ASSETS.items(), cols):
+    df = yf_safe(sym, "5d")
+    if df is None: 
+        continue
+    last = df.Close.iloc[-1]
+    prev = df.Close.iloc[-2]
+    chg = last - prev
+    pct = (chg/prev)*100
+    color = "#00d09c" if chg>=0 else "#ff4b4b"
 
-        df_chart = robust_yf_download(full, "1y")
-        fig = go.Figure(data=[go.Candlestick(x=df_chart.index, open=df_chart['Open'], high=df_chart['High'], low=df_chart['Low'], close=df_chart['Close'])])
-        fig.update_layout(template="plotly_dark", plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=500)
-        st.plotly_chart(fig, use_container_width=True)
+    col.metric(name, f"₹{last:,.2f}", f"{pct:+.2f}%")
 
-    else: st.error("Data not found. Check ticker symbol.")
+st.divider()
 
-# --- F/O DASHBOARD ---
-elif st.session_state.page == "📊 F/O Dashboard":
-    st.markdown("### 📊 F/O Dashboard (NSE Live)")
-    fo_sym = st.text_input("Symbol", "NIFTY")
-    data = get_nse_chain(fo_sym)
-    if data:
-        try:
-            recs = data['records']['data']
-            sel_exp = st.selectbox("Expiry", data['records']['expiryDates'])
-            chain = [x for x in recs if x['expiryDate'] == sel_exp]
-            spot = data['records']['underlyingValue']
-            st.metric(f"{fo_sym} Spot", f"₹{spot:,.2f}")
-            
-            ce_oi = sum([x['CE']['openInterest'] for x in chain if 'CE' in x])
-            pe_oi = sum([x['PE']['openInterest'] for x in chain if 'PE' in x])
-            pcr = pe_oi / ce_oi if ce_oi > 0 else 0
-            st.info(f"PCR: {pcr:.2f} | Total OI: {ce_oi+pe_oi:,.0f}")
-            
-            rows = []
-            for x in chain:
-                if x['strikePrice'] > spot*0.98 and x['strikePrice'] < spot*1.02:
-                    row = {'Strike': x['strikePrice']}
-                    if 'CE' in x: row.update({'CE Price': x['CE']['lastPrice'], 'CE OI': x['CE']['openInterest']})
-                    if 'PE' in x: row.update({'PE Price': x['PE']['lastPrice'], 'PE OI': x['PE']['openInterest']})
-                    rows.append(row)
-            st.dataframe(pd.DataFrame(rows).set_index('Strike'), use_container_width=True)
-        except: st.error("Data Parsing Error.")
-    else: st.error("NSE Connection Failed (Try Localhost).")
+# ---------- ANALYZER ----------
+st.subheader("📈 Stock / ETF / Commodity Analyzer")
+ticker = st.text_input("Enter Ticker (e.g. RELIANCE.NS, GOLDBEES.NS, GC=F)", "RELIANCE.NS")
 
-# --- SCANNER ---
-elif st.session_state.page == "⭐ Top 5 AI Picks":
-    st.markdown("### ⭐ Smart Momentum Scanners")
-    if st.button("Start Scan"):
-        results = []
-        bar = st.progress(0)
-        for i, t in enumerate(SCANNER_POOL[:8]):
-            bar.progress((i+1)/8)
-            res = run_quant_prediction(t)
-            if res: results.append((t, res['verdict'], res['curr'], res['color']))
-        bar.empty()
-        for t, ver, curr, clr in results:
-            st.markdown(f"<div class='fun-card' style='border-left:5px solid {clr}'><b>{t}</b>: {ver} @ ₹{curr:.2f}</div>", unsafe_allow_html=True)
+df = yf_safe(ticker)
+if df is not None:
+    df = add_indicators(df)
+    verdict, color, sl, tgt = quant_signal(df)
+
+    st.markdown(f"""
+    ### <span style='color:{color}'>{verdict}</span> @ ₹{df.Close.iloc[-1]:.2f}
+    **Stoploss:** ₹{sl:.2f} | **Target:** ₹{tgt:.2f}
+    """, unsafe_allow_html=True)
+
+    candle_chart(df)
+
+else:
+    st.error("Ticker not found.")
+
+st.divider()
+
+# ---------- SCANNER ----------
+st.subheader("⭐ Top Momentum Scanner")
+
+SCAN_LIST = ["RELIANCE.NS","HDFCBANK.NS","INFY.NS","TCS.NS","ITC.NS","GOLDBEES.NS","SILVERBEES.NS"]
+
+if st.button("Run Scan"):
+    for s in SCAN_LIST:
+        df = yf_safe(s, "6mo")
+        if df is None: 
+            continue
+        df = add_indicators(df)
+        verdict, color, _, _ = quant_signal(df)
+        st.markdown(f"<span style='color:{color}'><b>{s}</b> → {verdict}</span>", unsafe_allow_html=True)
+
+# ---------- NEWS ----------
+st.subheader("📰 Market News")
+feed = feedparser.parse("https://www.moneycontrol.com/rss/marketreports.xml")
+for e in feed.entries[:5]:
+    st.write(f"• {e.title}")

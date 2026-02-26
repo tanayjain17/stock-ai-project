@@ -28,7 +28,7 @@ def yf_safe(ticker, period, interval):
         df.columns = df.columns.get_level_values(0)
     return df
 
-# ===================== MARKET TREND FILTER =====================
+# ===================== MARKET TREND =====================
 def is_market_bullish():
     df = yf_safe("^NSEI", "3mo", "1d")
     if df is None or len(df) < 50:
@@ -36,15 +36,14 @@ def is_market_bullish():
     df["MA50"] = df["Close"].rolling(50).mean()
     return df.Close.iloc[-1] > df.MA50.iloc[-1]
 
-# ===============================================================
-# 1️⃣ REAL NSE OPTIONS CHAIN (LIVE OI + PCR)
-# ===============================================================
+# =====================================================
+# NSE OPTIONS CHAIN (LIVE OI)
+# =====================================================
 @st.cache_data(ttl=60)
-def get_nse_options(symbol="NIFTY"):
+def get_nse_options(symbol):
     url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
     headers = {
         "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.nseindia.com"
     }
 
@@ -65,33 +64,37 @@ def get_nse_options(symbol="NIFTY"):
                 "CE_OI": d["CE"]["openInterest"],
                 "PE_OI": d["PE"]["openInterest"],
                 "CE_IV": d["CE"]["impliedVolatility"],
-                "PE_IV": d["PE"]["impliedVolatility"]
+                "PE_IV": d["PE"]["impliedVolatility"],
             })
 
-    df = pd.DataFrame(rows)
-    return df
+    return pd.DataFrame(rows)
 
 def options_ai_signal(df):
     ce_oi = df["CE_OI"].sum()
     pe_oi = df["PE_OI"].sum()
     pcr = round(pe_oi / ce_oi, 2)
+    iv = df[["CE_IV","PE_IV"]].mean().mean()
 
-    if pcr < 0.8:
-        signal = "BULLISH 🟢 (Call Buying / Put Writing)"
-    elif pcr > 1.2:
-        signal = "BEARISH 🔴 (Put Buying / Call Writing)"
+    if is_market_bullish():
+        if pcr < 0.8:
+            strategy = "BUY CALL 📈"
+        elif pcr > 1.2:
+            strategy = "BUY PUT 📉"
+        else:
+            strategy = "NO TRADE ⚪"
     else:
-        signal = "RANGE ⚪ (Iron Condor / No Trade)"
+        strategy = "SHORT STRADDLE 💰" if iv > 18 else "LONG STRADDLE ⚡"
 
-    return signal, pcr
+    return pcr, iv, strategy
 
-# ===============================================================
-# 2️⃣ XGBOOST INTRADAY ML (5-MIN SCALPING)
-# ===============================================================
+# =====================================================
+# INTRADAY XGBOOST ML
+# =====================================================
 def add_intraday_features(df):
     df["Return"] = df["Close"].pct_change()
     df["EMA9"] = df["Close"].ewm(span=9).mean()
     df["EMA21"] = df["Close"].ewm(span=21).mean()
+    df["ATR"] = (df["High"] - df["Low"]).rolling(14).mean()
     df["RSI"] = 100 - (100 / (1 + (
         df["Close"].diff().clip(lower=0).rolling(14).mean() /
         df["Close"].diff().clip(upper=0).abs().rolling(14).mean()
@@ -121,8 +124,31 @@ def xgboost_intraday_signal(df):
         return "SCALP BUY 🚀", round(prob,1)
     elif prob < 35:
         return "SCALP SELL 🔻", round(100-prob,1)
-    else:
-        return "WAIT ⚪", round(prob,1)
+    return "WAIT ⚪", round(prob,1)
+
+def atr_sl_target(df, rr=2):
+    atr = df["ATR"].iloc[-1]
+    entry = df["Close"].iloc[-1]
+    return round(entry - atr,2), round(entry + atr*rr,2)
+
+def log_trade(stock, signal, entry, sl, tgt, prob):
+    row = {
+        "Date": datetime.now(),
+        "Stock": stock,
+        "Signal": signal,
+        "Entry": entry,
+        "Stoploss": sl,
+        "Target": tgt,
+        "Probability": prob
+    }
+
+    try:
+        df = pd.read_csv("trade_journal.csv")
+        df = pd.concat([df, pd.DataFrame([row])])
+    except:
+        df = pd.DataFrame([row])
+
+    df.to_csv("trade_journal.csv", index=False)
 
 # ===================== PAGE 1 =====================
 if page == "🏠 Market Dashboard":
@@ -139,21 +165,29 @@ elif page == "⚡ Intraday ML (XGBoost)":
     if df is not None and len(df) > 50:
         df = add_intraday_features(df)
         signal, prob = xgboost_intraday_signal(df)
+        sl, tgt = atr_sl_target(df)
 
-        st.metric("AI Signal", signal)
+        st.metric("Signal", signal)
         st.metric("Win Probability", f"{prob}%")
+        st.metric("Stoploss", sl)
+        st.metric("Target", tgt)
+
+        if st.button("Log Trade"):
+            log_trade(ticker, signal, df.Close.iloc[-1], sl, tgt, prob)
+            st.success("Trade logged successfully")
 
 # ===================== PAGE 3 =====================
 elif page == "📊 NSE Options Chain AI":
-    st.title("📊 NSE Options Chain AI (LIVE OI)")
+    st.title("📊 NSE Options Chain AI")
 
     symbol = st.selectbox("Index", ["NIFTY", "BANKNIFTY"])
     df = get_nse_options(symbol)
 
     if df is None:
-        st.error("NSE data blocked. Retry after some time.")
+        st.error("NSE blocked. Try again later.")
     else:
-        signal, pcr = options_ai_signal(df)
+        pcr, iv, strategy = options_ai_signal(df)
         st.metric("PCR", pcr)
-        st.success(signal)
+        st.metric("Avg IV", round(iv,1))
+        st.success(strategy)
         st.dataframe(df.sort_values("Strike"))

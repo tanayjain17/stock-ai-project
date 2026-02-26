@@ -11,3 +11,10 @@ textblob
 streamlit-autorefresh
 beautifulsoup4
 nltk
+streamlit
+yfinance
+pandas
+numpy
+requests
+scikit-learn
+xgboost

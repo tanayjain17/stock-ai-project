@@ -1,4 +1,8 @@
 # -------------------- IMPORTS --------------------
+import os
+import zipfile
+import requests
+from datetime import datetime
 import streamlit as st
 import yfinance as yf
 import pandas as pd

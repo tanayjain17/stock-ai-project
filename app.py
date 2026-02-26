@@ -201,19 +201,42 @@ elif page == "🤖 AI Prediction Center":
 
 # ==================== PAGE 4 ====================
 elif page == "⭐ Top 5 AI Picks":
-    st.title("⭐ Top 5 AI Picks")
+    st.title("⭐ AI Top Picks (Live Market)")
 
-    STOCKS = ["RELIANCE.NS","HDFCBANK.NS","INFY.NS","TCS.NS","ITC.NS"]
+    STOCKS = get_nifty50()
 
-    if st.button("Run AI Scan"):
+    min_score = st.slider("Minimum Bullish Score", 0.55, 0.80, 0.65, 0.01)
+
+    results = []
+
+    with st.spinner("AI scanning market..."):
         for s in STOCKS:
             df = yf_safe(s, "6mo", "1d")
-            if df is None:
+            if df is None or len(df) < 120:
                 continue
+
             df = add_support_resistance(add_real_delivery(add_features(df), s))
-            verdict, color, _, _ = ai_signal(df)
-            st.markdown(f"<span style='color:{color}'><b>{s}</b> → {verdict}</span>",
-                        unsafe_allow_html=True)
+            verdict, _, _, _ = ai_signal(df)
+            c = df.iloc[-1]
+
+            if verdict in ["BUY 📈", "STRONG BUY 🚀"] and c.Delivery_Trend == 1:
+                results.append({
+                    "Stock": s,
+                    "Price": round(c.Close, 2),
+                    "RSI": round(c.RSI, 1),
+                    "Bullish Score": round(c.Bullish_Score, 2),
+                    "Delivery %": round(c.Delivery_Pct, 1)
+                })
+
+    if not results:
+        st.warning("⚠️ No high-probability BUY setups today. Market is weak.")
+    else:
+        df_out = pd.DataFrame(results).sort_values(
+            by="Bullish Score", ascending=False
+        ).head(5)
+
+        st.success("✅ AI-selected stocks for TODAY")
+        st.dataframe(df_out, use_container_width=True)
 
 # ==================== PAGE 5 ====================
 elif page == "📰 Market News":
